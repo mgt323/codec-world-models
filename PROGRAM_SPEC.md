@@ -108,6 +108,16 @@ evaluate: (Prediction, GroundTruth, …) -> Metrics
 - Runs **after** (or separately from) training; does not feed gradients in stage 1.
 - Metrics live in observation / state / intervention space — not text aesthetics.
 
+### Interventions (option B — hidden `do()`)
+
+`State` may record `active_intervention` for simulation and evaluation.  
+`observe()` **must not** copy intervention flags into `Observation`.  
+Codecs and stage-1 training therefore never see an explicit `do()` / `is_intervened` signal.
+
+**Eval task #3 (Intervention accuracy) does not assume the model knows about the intervention at training time — ground truth about `do()` is available only to the evaluator, not to the model.**
+
+The model must infer interventional structure (if at all) from the observation stream alone; the evaluator may use full `State` / intervention records when scoring predicted effects under `do(A)` / `do(B)`.
+
 ### Probes (post hoc)
 
 ```text
@@ -132,7 +142,7 @@ Corollaries:
 2. Dataset builders materialize train examples as `(tokens,)` or `(tokens, next_tokens)` from `Observation` only; latents stored in parallel files for eval, not passed into `encode`.
 3. Train loop imports must not reference evaluator label constructors.
 4. C must not receive oracle \(p\) or true causes unless those fields are part of `Observation` for **all** codecs (they must not be).
-
+5. Intervention / `do()` records stay on `State` (and evaluator ground truth); they are **not** Observation fields (option B above).
 ---
 
 ## 4. How the program guarantees this

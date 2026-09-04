@@ -1,11 +1,7 @@
 ---
 name: build-experiment
-description: >-
-  Implement experiment components against EXPERIMENT_PLAN.md without silently
-  changing methodology. Use when adding or modifying world/, codecs/, data/,
-  model/, train/, eval/, or probes/; when the user asks to build, implement,
-  or extend the experiment; or when running a minimal end-to-end slice.
-disable-model-invocation: true
+description: Implement experiment components against EXPERIMENT_PLAN.md without silently changing methodology. Use when adding or modifying world/, codecs/, data/, model/, train/, eval/, or probes/; when the user asks to build, implement, or extend the experiment; or when running a minimal end-to-end slice.
+disable-model-invocation: false
 ---
 
 # Build Experiment
@@ -64,6 +60,8 @@ If the request would break an invariant → **stop**, explain risk, name the aff
 - Do not mix simulation, encoding, and training in one function
 - Config diffs across comparable runs: only `codec`, `match_regime`, `seed` (shared locked `difficulty`)
 
+
+
 ### 5. Add tests
 
 Prefer pytest. Minimum:
@@ -71,6 +69,8 @@ Prefer pytest. Minimum:
 - determinism: same world seed → same episode
 - invariants touched by the change (e.g. info-equality, no `H_t` in codec inputs)
 - one smoke test on the new path
+
+
 
 ### 6. Run minimal experiment
 
