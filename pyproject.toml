@@ -1,0 +1,26 @@
+[project]
+name = "codec-world-models"
+version = "0.1.0"
+description = "Controlled experiment: observation codecs and learnable world models"
+requires-python = "==3.13.15"
+dependencies = [
+    "torch",
+    "numpy",
+    "scipy",
+    "pandas",
+    "matplotlib",
+    "pydantic",
+    "zarr",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

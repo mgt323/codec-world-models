@@ -1,0 +1,38 @@
+---
+description: Protect the scientific validity of the codec-world-models experiment.
+alwaysApply: true
+---
+
+# Experiment Integrity
+
+This repository implements a controlled scientific experiment.
+
+Do not change:
+- the information contract O_t = Obs(S_t)
+- codec access restrictions
+- codec definitions
+- matched-compute methodology
+- matched-information methodology
+- evaluation targets
+- primary endpoints
+- randomization or seed handling
+
+without explicitly flagging the change as a methodological change.
+
+Never silently:
+- give a codec access to hidden state
+- add oracle probabilities or true causal labels to codec inputs
+- modify only one codec's information content
+- add auxiliary losses to only one experimental condition
+- change model architecture for one codec
+- change tokenizer behavior in a codec-specific way without reporting it
+- change train/validation/OOD splits between codecs.
+
+When proposing an implementation that could alter experimental validity:
+1. stop implementation,
+2. explain the methodological risk,
+3. identify the affected comparison,
+4. propose the smallest valid alternative.
+
+Treat EXPERIMENT_PLAN.md as the scientific specification.
+Code must conform to the experiment, not redefine it.

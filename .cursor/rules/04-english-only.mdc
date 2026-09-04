@@ -1,0 +1,16 @@
+---
+description: All project language must be English.
+alwaysApply: true
+---
+
+# English only
+
+All project artifacts must be in English:
+
+- comments and docstrings
+- function, variable, class, and module names
+- log messages, CLI output, and exceptions
+- metric keys, config field names, and report text
+- commit messages and PR descriptions for this repo (unless the user explicitly requests otherwise)
+
+Do not introduce Polish (or other non-English) identifiers or user-facing strings in code.

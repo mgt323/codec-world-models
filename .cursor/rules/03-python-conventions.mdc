@@ -1,0 +1,28 @@
+---
+description: Python implementation conventions.
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# Python Conventions
+
+Use **Python 3.13.15** (see `TECH_STACK.md`, `.python-version`).
+
+Stack: PyTorch, uv, pytest, numpy, scipy, pandas, matplotlib, pydantic/dataclasses, zarr.
+
+Prefer:
+- typed functions
+- dataclasses or pydantic models for experiment data
+- small pure functions
+- explicit dependencies
+- deterministic RNG objects
+- pytest for tests
+
+Avoid:
+- hidden global state
+- singleton configuration
+- implicit random seeds
+- functions mixing simulation, encoding and training
+- overly generic abstractions
+
+Language: English only for comments, identifiers, and outputs (see `04-english-only`).

@@ -1,0 +1,25 @@
+---
+description: Enforce reproducibility and deterministic experiment execution.
+alwaysApply: true
+---
+
+# Reproducibility
+
+Every experiment must record:
+- git commit
+- config
+- random seeds
+- dataset seed
+- model initialization seed
+- codec
+- matching regime
+- model parameter count
+- token count
+- optimizer steps
+- FLOPs estimate
+- dataset version/checksum
+
+Never use uncontrolled global randomness.
+
+A result is not valid unless another run can reproduce the same generated episode
+from the same world seed.
