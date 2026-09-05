@@ -20,6 +20,8 @@ from world.schema import (
     quantize_value,
     schema_checksum,
 )
+from world.parity_fixtures import sample_diverse_parity_states, sample_parity_states
+from world.simulate import simulate
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -39,5 +41,8 @@ __all__ = [
     "observation_field_names",
     "observe",
     "quantize_value",
+    "sample_diverse_parity_states",
+    "sample_parity_states",
     "schema_checksum",
+    "simulate",
 ]

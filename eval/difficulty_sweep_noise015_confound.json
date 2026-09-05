@@ -1,0 +1,138 @@
+[
+  {
+    "confounding_strength": 0.0,
+    "heuristic_confusion_matrix": {
+      "a_causes_b": {
+        "a_causes_b": 24,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 1
+      },
+      "b_causes_a": {
+        "a_causes_b": 0,
+        "b_causes_a": 23,
+        "common_cause": 0,
+        "spurious": 2
+      },
+      "common_cause": {
+        "a_causes_b": 2,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 23
+      },
+      "spurious": {
+        "a_causes_b": 0,
+        "b_causes_a": 2,
+        "common_cause": 0,
+        "spurious": 23
+      }
+    },
+    "heuristic_regime_accuracy": 0.7,
+    "majority_regime_accuracy": 0.25,
+    "n_episodes": 100,
+    "noise_scale": 0.15,
+    "oracle_regime_accuracy": 1.0
+  },
+  {
+    "confounding_strength": 0.1,
+    "heuristic_confusion_matrix": {
+      "a_causes_b": {
+        "a_causes_b": 24,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 1
+      },
+      "b_causes_a": {
+        "a_causes_b": 0,
+        "b_causes_a": 23,
+        "common_cause": 0,
+        "spurious": 2
+      },
+      "common_cause": {
+        "a_causes_b": 0,
+        "b_causes_a": 2,
+        "common_cause": 0,
+        "spurious": 23
+      },
+      "spurious": {
+        "a_causes_b": 2,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 23
+      }
+    },
+    "heuristic_regime_accuracy": 0.7,
+    "majority_regime_accuracy": 0.25,
+    "n_episodes": 100,
+    "noise_scale": 0.15,
+    "oracle_regime_accuracy": 1.0
+  },
+  {
+    "confounding_strength": 0.2,
+    "heuristic_confusion_matrix": {
+      "a_causes_b": {
+        "a_causes_b": 22,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 3
+      },
+      "b_causes_a": {
+        "a_causes_b": 0,
+        "b_causes_a": 22,
+        "common_cause": 0,
+        "spurious": 3
+      },
+      "common_cause": {
+        "a_causes_b": 0,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 25
+      },
+      "spurious": {
+        "a_causes_b": 0,
+        "b_causes_a": 1,
+        "common_cause": 0,
+        "spurious": 24
+      }
+    },
+    "heuristic_regime_accuracy": 0.68,
+    "majority_regime_accuracy": 0.25,
+    "n_episodes": 100,
+    "noise_scale": 0.15,
+    "oracle_regime_accuracy": 1.0
+  },
+  {
+    "confounding_strength": 0.3,
+    "heuristic_confusion_matrix": {
+      "a_causes_b": {
+        "a_causes_b": 22,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 3
+      },
+      "b_causes_a": {
+        "a_causes_b": 0,
+        "b_causes_a": 21,
+        "common_cause": 0,
+        "spurious": 4
+      },
+      "common_cause": {
+        "a_causes_b": 0,
+        "b_causes_a": 1,
+        "common_cause": 0,
+        "spurious": 24
+      },
+      "spurious": {
+        "a_causes_b": 2,
+        "b_causes_a": 1,
+        "common_cause": 0,
+        "spurious": 22
+      }
+    },
+    "heuristic_regime_accuracy": 0.65,
+    "majority_regime_accuracy": 0.25,
+    "n_episodes": 100,
+    "noise_scale": 0.15,
+    "oracle_regime_accuracy": 1.0
+  }
+]

@@ -78,6 +78,35 @@ parse_k:  TokenSequence | string -> FactRecord F
 - Signature accepts **only** `Observation` (and codec-local RNG for E / A-bag shuffles).
 - Info-equality: \(\mathrm{parse}_k(\mathrm{encode}_k(O)) = F(O)\) with shared quantization (§1.1 of the plan).
 
+#### Codec A — Substance / essentialist caption
+
+Format and style follow `EXPERIMENT_PLAN.md` §3 (entities + static attributes; no eventive chains).
+
+The Relation line is a fixed, value-independent categorical utterance
+by design — it is NOT meant to be truthful or informative about actual
+A/B similarity. This is intentional: it demonstrates substance ontology's
+blindness to dynamic relational content, without introducing eventive
+language. It contributes zero bits to FactRecord and MUST remain
+excluded from parity/info-equality checks. Do not 'fix' it to reflect
+real similarity — that would make A relational and collapse the A/B
+contrast the experiment depends on.
+
+#### Codec B — Process / relational event chain
+
+Format (per timestep):
+
+```text
+(observe A=<val>) → (co-vary B=<val>) → (meta n=<n> source=<src> noise=<bin>)
+```
+
+Codec B does not use directional markers (e.g. '↑') at the
+single-Observation encoding level, since no genuine trend
+information is available without prior-timestep context — this
+is a deliberate omission, not a missing feature. Noise/confidence
+metadata is expressed once, under the 'meta' event, using the
+same underlying field as Codec C's evidential 'noise' — never
+mislabeled as relational 'strength'.
+
 ### Model
 
 ```text
@@ -126,6 +155,44 @@ probe: frozen activations + GroundTruth -> probe Metrics
 
 - Fit only on frozen models; identical probe protocol across codecs.
 
+### World v0 default difficulty (pilot lock — provisional)
+
+Locked from `eval/difficulty_sweep_noise_c0.json` and
+`eval/difficulty_sweep_noise015_confound.json` (O-only heuristic + confusion
+matrices; not from the LatentState cheat oracle):
+
+```text
+DEFAULT_DIFFICULTY_V0 = Difficulty(
+    noise_scale=0.15,
+    regime_switch_rate=0.0,
+    partial_obs_rate=…,   # OPEN — not yet swept; diagnostics used 0.0
+    confounding_strength=0.0,
+)
+```
+
+- **`noise_scale=0.15`:** stable directional heuristic recall (~88% on
+  `a_causes_b` / `b_causes_a`); away from the NoiseBin LOW/MEDIUM boundary
+  at 0.1.
+- **`confounding_strength=0.0`:** confound sweep at fixed `noise_scale=0.15`
+  did **not** collapse spurious’s distinct heuristic recall (~23–25/25 at
+  0.0–0.2; mild dip to 22/25 at 0.3). Keep 0.0 as the default; no need to
+  raise confound for separability under the current O-only rule.
+- **`partial_obs_rate`:** **not finalized.** All difficulty-pilot diagnostics
+  so far used full observation (`partial_obs_rate=0.0`). Do not treat
+  `DEFAULT_DIFFICULTY_V0` as final until `partial_obs_rate` is swept and
+  locked. Until then, comparable runs that claim this default must log
+  `partial_obs_rate=0.0` explicitly as the interim value.
+
+**Accepted ceiling (eval task #2 / regime classification from one episode):**
+Under World v0, `hidden_c` is fixed within an episode, so within-episode
+statistics cannot separate `common_cause` from `spurious` (documented in
+`eval/regime_baseline.py`; confirmed by explore diagnostics). The difficulty
+pilot / O-only heuristic gate therefore applies to the **directional subset**
+(`a_causes_b`, `b_causes_a`); the `common_cause`/`spurious` collapse is a
+**known identifiability ceiling**, not a defect in `simulate.py` or the
+baseline harness. Do not “fix” by changing dynamics without an explicit
+methodological change to `EXPERIMENT_PLAN.md`.
+
 ---
 
 ## 3. Hard access rules (non-negotiable)
@@ -150,18 +217,19 @@ Corollaries:
 ### 4.1 Module boundaries
 
 ```text
-world/     State, LatentState, Observer, simulate
-codecs/    encode_*/parse_*  — import Observation only
-data/      builds token datasets from Observation; latents in eval-only stores
-model/     Transformer(tokens -> logits)
-train/     next-token loop; no eval target imports
-eval/      Prediction + GroundTruth(+ LatentState) -> Metrics
-probes/    frozen activations only
+world/       State, LatentState, Observer, simulate
+obs_codecs/  encode_*/parse_*  — import Observation only
+             (named obs_codecs to avoid shadowing stdlib codecs)
+data/        builds token datasets from Observation; latents in eval-only stores
+model/       Transformer(tokens -> logits)
+train/       next-token loop; no eval target imports
+eval/        Prediction + GroundTruth(+ LatentState) -> Metrics
+probes/      frozen activations only
 ```
 
 Forbidden edges (lint / review / auditor):
 
-- `codecs/` → `LatentState` or eval label modules
+- `obs_codecs/` → `LatentState` or eval label modules
 - `train/` → `eval/` target builders or `LatentState`
 - `model/` → `world` state types as forward inputs
 

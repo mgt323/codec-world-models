@@ -21,13 +21,13 @@ EncodeFn = Callable[[Observation], str]
 # Shared provisional tokenizer (until model tokenizer lands):
 # - identifiers / enums: letters, digits, underscore, hyphen
 # - numbers: optional sign + digits + optional fraction
-# - punctuation kept as singleton tokens: : = , .
+# - punctuation kept as singleton tokens: : = , . ( ) ~ → ↑
 # Whitespace (including newlines) is a separator only.
 _TOKEN_RE = re.compile(
-    r"[A-Za-z_][A-Za-z0-9_-]*|-?\d+(?:\.\d+)?|[:=,.]"
+    r"[A-Za-z_][A-Za-z0-9_-]*|-?\d+(?:\.\d+)?|[:=,.()~→↑]"
 )
 
-TOKENIZATION_SCHEME = "regex_v0: ident|number|:=,. ; whitespace-separated"
+TOKENIZATION_SCHEME = "regex_v0: ident|number|:=,.()~→↑ ; whitespace-separated"
 
 
 def tokenize(text: str) -> list[str]:

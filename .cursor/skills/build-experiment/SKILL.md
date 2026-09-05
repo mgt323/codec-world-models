@@ -1,6 +1,6 @@
 ---
 name: build-experiment
-description: Implement experiment components against EXPERIMENT_PLAN.md without silently changing methodology. Use when adding or modifying world/, codecs/, data/, model/, train/, eval/, or probes/; when the user asks to build, implement, or extend the experiment; or when running a minimal end-to-end slice.
+description: Implement experiment components against EXPERIMENT_PLAN.md without silently changing methodology. Use when adding or modifying world/, obs_codecs/, data/, model/, train/, eval/, or probes/; when the user asks to build, implement, or extend the experiment; or when running a minimal end-to-end slice.
 disable-model-invocation: false
 ---
 
@@ -35,7 +35,7 @@ Treat the plan as the scientific specification. Project rules `01-experiment-int
 Map the request to layout:
 
 ```text
-world/    codecs/    data/    model/    train/    eval/    probes/    configs/
+world/    obs_codecs/    data/    model/    train/    eval/    probes/    configs/
 ```
 
 Inspect existing interfaces, configs, and tests before writing new code.

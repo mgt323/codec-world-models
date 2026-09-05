@@ -103,4 +103,4 @@ Fail if one codec exposes facts others cannot recover from the same `O`, e.g.:
 
 Severity: **critical** = validity broken (leak / unequal info); **major** = contract gap; **minor** = hygiene.
 
-Prefer running existing `codecs/` info-equality tests if present; extend them rather than one-off notebooks.
+Prefer running existing `obs_codecs/` info-equality tests if present; extend them rather than one-off notebooks.

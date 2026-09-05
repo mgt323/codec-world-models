@@ -104,3 +104,48 @@ def test_facts_from_observation_deterministic_and_quantization_stable() -> None:
         assert pickle.dumps(again, protocol=pickle.HIGHEST_PROTOCOL) == pickle.dumps(
             first, protocol=pickle.HIGHEST_PROTOCOL
         )
+
+
+def test_encode_identical_when_only_latent_differs() -> None:
+    """PROGRAM_SPEC §4.3: same O, different H ⇒ identical encodings (A and B)."""
+    from obs_codecs.encode_a import encode_A
+    from obs_codecs.encode_b import encode_B
+
+    states = [
+        _base_state(regime=r, hidden_c=h)
+        for r in CausalRegime
+        for h in (0.0, 0.5, 1.0)
+    ]
+    observations = [observe(s) for s in states]
+    assert len(set(observations)) == 1
+
+    texts_a = {encode_A(observe(s)) for s in states}
+    texts_b = {encode_B(observe(s)) for s in states}
+    assert len(texts_a) == 1
+    assert len(texts_b) == 1
+
+
+def test_encode_identical_when_only_intervention_differs() -> None:
+    """Option B: active_intervention on State must not change codec encodings."""
+    from obs_codecs.encode_a import encode_A
+    from obs_codecs.encode_b import encode_B
+    from world.schema import Intervention, InterventionTarget
+
+    base = _base_state(regime=CausalRegime.A_CAUSES_B)
+    with_do = State(
+        t=base.t,
+        a=base.a,
+        b=base.b,
+        a_observed=base.a_observed,
+        b_observed=base.b_observed,
+        noise_bin=base.noise_bin,
+        n_samples=base.n_samples,
+        source=base.source,
+        latent=base.latent,
+        active_intervention=Intervention(
+            target=InterventionTarget.A, value=0.9, timestep=0
+        ),
+    )
+    assert observe(base) == observe(with_do)
+    assert encode_A(observe(base)) == encode_A(observe(with_do))
+    assert encode_B(observe(base)) == encode_B(observe(with_do))

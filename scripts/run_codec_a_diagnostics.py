@@ -6,7 +6,7 @@ from pathlib import Path
 
 from obs_codecs.diagnostics import compute_codec_diagnostics, write_diagnostics_json
 from obs_codecs.encode_a import encode_A
-from obs_codecs.parity_audit import sample_diverse_parity_states
+from world.parity_fixtures import sample_diverse_parity_states
 from world.schema import observe
 
 ROOT = Path(__file__).resolve().parents[1]

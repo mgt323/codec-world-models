@@ -295,7 +295,7 @@ Also interesting: **beh ≈, repr ≠** — different internal solutions, same b
 codec-world-models/
   EXPERIMENT_PLAN.md
   world/          # simulator, State/Obs schema, interventions
-  codecs/         # encode_A..E + info-equality tests
+  obs_codecs/     # encode_A..E + info-equality tests (not stdlib codecs)
   data/           # generate_episodes.py
   model/          # identical transformer
   train/          # single entrypoint + configs

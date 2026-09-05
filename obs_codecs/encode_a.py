@@ -1,10 +1,11 @@
 """Codec A — substance / essentialist captions (Observation -> string).
 
-``encode_A`` / ``parse_A`` take Observation only (I1).
-``decode_A_facts`` is the codec-specific parity adapter (string -> FactRecord).
+``encode_A: Observation -> str``
+``parse_A: str -> FactRecord``  (PROGRAM_SPEC parse_k; official info-equality entrypoint)
+``observation_from_A: str -> Observation``  (round-trip helper; Relation line discarded for F)
 
 Python package name is ``obs_codecs`` (not ``codecs``) to avoid shadowing
-the stdlib ``codecs`` module. Layout role matches EXPERIMENT_PLAN ``codecs/``.
+the stdlib ``codecs`` module. Matches EXPERIMENT_PLAN / PROGRAM_SPEC layout.
 """
 
 from __future__ import annotations
@@ -44,13 +45,17 @@ def encode_A(obs: Observation) -> str:
     return "\n".join(lines)
 
 
-def decode_A_facts(text: str) -> FactRecord:
-    """Codec-A-specific: parse caption string to FactRecord for parity audit."""
-    return facts_from_observation(parse_A(text))
+def parse_A(text: str) -> FactRecord:
+    """Official Codec A parser: string -> FactRecord (PROGRAM_SPEC parse_k)."""
+    return facts_from_observation(observation_from_A(text))
 
 
-def parse_A(text: str) -> Observation:
-    """Parse a Codec A caption back to Observation (for info-equality tests)."""
+# Back-compat alias used by older scripts/tests.
+decode_A_facts = parse_A
+
+
+def observation_from_A(text: str) -> Observation:
+    """Parse a Codec A caption back to Observation (Relation line validated, not in F)."""
     lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
     if len(lines) != 4:
         raise ValueError(f"Codec A expects 4 lines, got {len(lines)}")

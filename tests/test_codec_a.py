@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from obs_codecs.encode_a import encode_A, parse_A
+from obs_codecs.encode_a import encode_A, observation_from_A, parse_A
 from world.schema import (
     NoiseBin,
     Observation,
@@ -51,13 +51,13 @@ def _obs(
     ],
 )
 def test_codec_a_roundtrip_facts_match(obs: Observation) -> None:
-    """encode_A -> parse_A -> facts_from_observation equals original F(O)."""
+    """encode_A -> parse_A equals F(O); observation_from_A recovers Observation."""
     text = encode_A(obs)
     assert "→" not in text
     assert "hits" not in text.lower()
 
-    decoded = parse_A(text)
-    assert facts_from_observation(decoded) == facts_from_observation(obs)
+    assert parse_A(text) == facts_from_observation(obs)
+    assert facts_from_observation(observation_from_A(text)) == facts_from_observation(obs)
 
 
 def test_encode_a_essentialist_format() -> None:
