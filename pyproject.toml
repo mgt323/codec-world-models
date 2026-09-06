@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "codec-world-models"
 version = "0.1.0"
@@ -11,6 +15,8 @@ dependencies = [
     "matplotlib",
     "pydantic",
     "zarr",
+    "h5py",
+    "pyarrow",
 ]
 
 [dependency-groups]
@@ -18,8 +24,19 @@ dev = [
     "pytest",
 ]
 
-[tool.uv]
-package = false
+[tool.setuptools.packages.find]
+include = [
+    "configs*",
+    "data*",
+    "eval*",
+    "obs_codecs*",
+    "world*",
+]
+exclude = [
+    "artifacts*",
+    "tests*",
+    "scripts*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

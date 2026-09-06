@@ -18,6 +18,8 @@ if str(_ROOT) not in sys.path:
 
 from obs_codecs.encode_a import encode_A, parse_A
 from obs_codecs.encode_b import encode_B, parse_B
+from obs_codecs.encode_c import encode_C, parse_C
+from obs_codecs.encode_d import encode_D, parse_D
 from obs_codecs.parity_audit import EncodeFn, ParseFactsFn, run_parity_audit
 from world.parity_fixtures import sample_diverse_parity_states
 from world.schema import observe
@@ -25,6 +27,8 @@ from world.schema import observe
 _CODECS: dict[str, tuple[EncodeFn, ParseFactsFn]] = {
     "A": (encode_A, parse_A),
     "B": (encode_B, parse_B),
+    "C": (encode_C, parse_C),
+    "D": (encode_D, parse_D),
 }
 
 

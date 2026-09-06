@@ -2,7 +2,14 @@
 
 Codec-agnostic: callers inject ``encode: Observation -> str``.
 Tokenization is a shared whitespace/punctuation scheme (documented below)
-so A–E diagnostics stay comparable until a trained tokenizer exists.
+so A–E diagnostics stay comparable until a trained model tokenizer exists.
+
+**Locked for compute-matching:** ``regex_v3`` is the final *provisional*
+scheme used for avg-token diagnostics and matched-compute / token-update
+budgets until a trained tokenizer replaces it. Do not bump to v4 after
+budgets are set from v3 counts. Optional reorder-only controls (C-shuffle,
+A-bag) must not introduce new punctuation; any new glyph requires an
+explicit scheme bump **and** recomputation of all token-based budgets.
 """
 
 from __future__ import annotations
@@ -21,13 +28,18 @@ EncodeFn = Callable[[Observation], str]
 # Shared provisional tokenizer (until model tokenizer lands):
 # - identifiers / enums: letters, digits, underscore, hyphen
 # - numbers: optional sign + digits + optional fraction
-# - punctuation kept as singleton tokens: : = , . ( ) ~ → ↑
+# - punctuation kept as singleton tokens: : = , . ; ( ) { } | ~ → ↑ ?
 # Whitespace (including newlines) is a separator only.
+#
+# History: v1 { } ? (Codec C); v2 | (E bag_b); v3 ; (Codec D).
+# regex_v3 covers all shipped A–D + B-E surfaces; reserved ↑ ~ kept for
+# plan-mentioned glyphs that are not currently emitted by encode_*.
+# LOCKED — see module docstring (no silent v4 after compute budgets).
 _TOKEN_RE = re.compile(
-    r"[A-Za-z_][A-Za-z0-9_-]*|-?\d+(?:\.\d+)?|[:=,.()~→↑]"
+    r"[A-Za-z_][A-Za-z0-9_-]*|-?\d+(?:\.\d+)?|[:=,.;(){}|~→↑?]"
 )
 
-TOKENIZATION_SCHEME = "regex_v0: ident|number|:=,.()~→↑ ; whitespace-separated"
+TOKENIZATION_SCHEME = "regex_v3: ident|number|:=,.;(){}|~→↑? ; whitespace-separated"
 
 
 def tokenize(text: str) -> list[str]:

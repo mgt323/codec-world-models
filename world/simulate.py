@@ -11,6 +11,9 @@ NoiseBin cutoffs (locked for v0; map ``difficulty.noise_scale``):
 
 ``n_samples`` is fixed at 3 per episode for v0 (deterministic; not derived
 from regime or ``hidden_c``).
+
+Default difficulty for ``simulate`` is ``DEFAULT_DIFFICULTY_V0`` (locked in
+this module — import that constant rather than re-stating field literals).
 """
 
 from __future__ import annotations
@@ -33,14 +36,27 @@ from world.schema import (
 _N_SAMPLES_V0 = 3
 _REGIMES: tuple[CausalRegime, ...] = tuple(CausalRegime)
 
+# Locked World v0 operating point (PROGRAM_SPEC §2 / EXPERIMENT_PLAN §2.1).
+# Single source of truth — do not duplicate these literals elsewhere.
+DEFAULT_DIFFICULTY_V0 = Difficulty(
+    noise_scale=0.15,
+    regime_switch_rate=0.0,
+    partial_obs_rate=0.2,
+    confounding_strength=0.0,
+)
+
 
 def simulate(
     seed: int,
     n_steps: int,
-    difficulty: Difficulty = Difficulty(),
+    difficulty: Difficulty = DEFAULT_DIFFICULTY_V0,
     interventions: Sequence[Intervention] | None = None,
 ) -> list[State]:
-    """Simulate one episode. Does not call Codec or Model."""
+    """Simulate one episode. Does not call Codec or Model.
+
+    Default ``difficulty`` is ``DEFAULT_DIFFICULTY_V0`` (locked pilot operating
+    point). Pass an explicit ``Difficulty`` to override for sweeps / OOD.
+    """
     if n_steps < 0:
         raise ValueError(f"n_steps must be >= 0, got {n_steps}")
     if difficulty.regime_switch_rate != 0.0:

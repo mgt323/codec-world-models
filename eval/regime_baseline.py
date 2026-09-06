@@ -147,6 +147,7 @@ def heuristic_confusion_matrix(episodes: Sequence[Episode]) -> ConfusionMatrix:
 def difficulty_sweep(
     noise_scale_values: Iterable[float],
     confounding_strength_values: Iterable[float],
+    partial_obs_rate_values: Iterable[float],
     *,
     n_episodes_per_cell: int = 100,
     n_steps: int = 30,
@@ -154,38 +155,42 @@ def difficulty_sweep(
 ) -> list[dict[str, object]]:
     """Sweep difficulty cells; return rows with accuracies + confusion matrices.
 
-    Does not reduce to a single accuracy — each cell includes the full
-    heuristic confusion matrix (required for interpreting the World v0 ceiling).
+    ``noise_scale``, ``confounding_strength``, and ``partial_obs_rate`` are
+    first-class axes (full Cartesian product). Does not reduce to a single
+    accuracy — each cell includes the full heuristic confusion matrix
+    (required for interpreting the World v0 ceiling).
     """
     rows: list[dict[str, object]] = []
     seed = start_seed
     for noise_scale in noise_scale_values:
         for confounding_strength in confounding_strength_values:
-            difficulty = Difficulty(
-                noise_scale=float(noise_scale),
-                confounding_strength=float(confounding_strength),
-                partial_obs_rate=0.0,
-                regime_switch_rate=0.0,
-            )
-            episodes, seed = _collect_balanced_episodes(
-                difficulty=difficulty,
-                n_per_regime=n_episodes_per_cell // 4
-                if n_episodes_per_cell >= 4
-                else n_episodes_per_cell,
-                n_steps=n_steps,
-                start_seed=seed,
-                target_total=n_episodes_per_cell,
-            )
-            row = {
-                "noise_scale": float(noise_scale),
-                "confounding_strength": float(confounding_strength),
-                "n_episodes": len(episodes),
-                "oracle_regime_accuracy": oracle_regime_accuracy(episodes),
-                "majority_regime_accuracy": majority_regime_accuracy(episodes),
-                "heuristic_regime_accuracy": heuristic_regime_accuracy(episodes),
-                "heuristic_confusion_matrix": heuristic_confusion_matrix(episodes),
-            }
-            rows.append(row)
+            for partial_obs_rate in partial_obs_rate_values:
+                difficulty = Difficulty(
+                    noise_scale=float(noise_scale),
+                    confounding_strength=float(confounding_strength),
+                    partial_obs_rate=float(partial_obs_rate),
+                    regime_switch_rate=0.0,
+                )
+                episodes, seed = _collect_balanced_episodes(
+                    difficulty=difficulty,
+                    n_per_regime=n_episodes_per_cell // 4
+                    if n_episodes_per_cell >= 4
+                    else n_episodes_per_cell,
+                    n_steps=n_steps,
+                    start_seed=seed,
+                    target_total=n_episodes_per_cell,
+                )
+                row = {
+                    "noise_scale": float(noise_scale),
+                    "confounding_strength": float(confounding_strength),
+                    "partial_obs_rate": float(partial_obs_rate),
+                    "n_episodes": len(episodes),
+                    "oracle_regime_accuracy": oracle_regime_accuracy(episodes),
+                    "majority_regime_accuracy": majority_regime_accuracy(episodes),
+                    "heuristic_regime_accuracy": heuristic_regime_accuracy(episodes),
+                    "heuristic_confusion_matrix": heuristic_confusion_matrix(episodes),
+                }
+                rows.append(row)
     return rows
 
 
@@ -242,6 +247,7 @@ def format_sweep_row(row: Mapping[str, object]) -> str:
     lines = [
         f"noise_scale={row['noise_scale']} "
         f"confounding_strength={row['confounding_strength']} "
+        f"partial_obs_rate={row.get('partial_obs_rate', '—')} "
         f"n={row['n_episodes']}",
         f"  oracle={row['oracle_regime_accuracy']:.3f} "
         f"majority={row['majority_regime_accuracy']:.3f} "

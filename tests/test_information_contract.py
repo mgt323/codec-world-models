@@ -107,9 +107,11 @@ def test_facts_from_observation_deterministic_and_quantization_stable() -> None:
 
 
 def test_encode_identical_when_only_latent_differs() -> None:
-    """PROGRAM_SPEC §4.3: same O, different H ⇒ identical encodings (A and B)."""
+    """PROGRAM_SPEC §4.3: same O, different H ⇒ identical encodings (A–D)."""
     from obs_codecs.encode_a import encode_A
     from obs_codecs.encode_b import encode_B
+    from obs_codecs.encode_c import encode_C
+    from obs_codecs.encode_d import encode_D
 
     states = [
         _base_state(regime=r, hidden_c=h)
@@ -121,14 +123,20 @@ def test_encode_identical_when_only_latent_differs() -> None:
 
     texts_a = {encode_A(observe(s)) for s in states}
     texts_b = {encode_B(observe(s)) for s in states}
+    texts_c = {encode_C(observe(s)) for s in states}
+    texts_d = {encode_D(observe(s)) for s in states}
     assert len(texts_a) == 1
     assert len(texts_b) == 1
+    assert len(texts_c) == 1
+    assert len(texts_d) == 1
 
 
 def test_encode_identical_when_only_intervention_differs() -> None:
     """Option B: active_intervention on State must not change codec encodings."""
     from obs_codecs.encode_a import encode_A
     from obs_codecs.encode_b import encode_B
+    from obs_codecs.encode_c import encode_C
+    from obs_codecs.encode_d import encode_D
     from world.schema import Intervention, InterventionTarget
 
     base = _base_state(regime=CausalRegime.A_CAUSES_B)
@@ -149,3 +157,5 @@ def test_encode_identical_when_only_intervention_differs() -> None:
     assert observe(base) == observe(with_do)
     assert encode_A(observe(base)) == encode_A(observe(with_do))
     assert encode_B(observe(base)) == encode_B(observe(with_do))
+    assert encode_C(observe(base)) == encode_C(observe(with_do))
+    assert encode_D(observe(base)) == encode_D(observe(with_do))

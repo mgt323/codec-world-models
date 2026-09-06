@@ -17,6 +17,7 @@ def main() -> int:
     rows = difficulty_sweep(
         noise_scale_values=[0.05, 0.1, 0.15, 0.2, 0.3],
         confounding_strength_values=[0.0],
+        partial_obs_rate_values=[0.0],
         n_episodes_per_cell=100,
         n_steps=30,
         start_seed=0,

@@ -148,8 +148,10 @@ obs: A=0.41, B=?
 source: sensor_A
 n: 3
 noise: high
-alts: {common_cause, A_causes_B, B_causes_A, noise}
+alts: {common_cause, a_causes_b, b_causes_a, spurious}
 ```
+
+Locked per D1/D2 design review — see PROGRAM_SPEC.md for the alts safety rationale.
 
 Only then does ECE/Brier measure learned calibration rather than parroting a provided `p=0.73`.
 
@@ -172,6 +174,8 @@ Same tokens / similar entropy; destroyed organization:
 - `B-bag` — multiset without order markers
 - optional `A-bag` — permute essentialist per-timestep blocks (see ambient time contract)
 - optional `C-shuffle` of fields
+
+E-transform seeds vary per `(episode, timestep, variant)` via a stable hash (`derive_transform_seed`), specifically to prevent Fisher–Yates from producing a stable slot→role remapping that would let B-shuffle/B-bag leak recoverable order information across timesteps (variant name included so shuffle and bag stay independent controls; `reverse_b` needs no seed).
 
 **Inference rule:**
 
@@ -209,6 +213,8 @@ Always report:
 
 1. **Compute-matched:** fixed FLOPs (or fixed token-updates).
 2. **Info-matched:** fixed number of episodes / states \(O_{1:T}\).
+
+Provisional token counts for diagnostics and compute-matched token-update budgets use the locked shared scheme ``regex_v3`` in `obs_codecs/diagnostics.py` (covers A–D and B-E; reorder-only optional C-shuffle / A-bag need no new glyphs). Do not change that scheme after budgets are computed without an explicit methodological bump and full budget recomputation. A trained model tokenizer may replace it later as a declared change.
 
 Accept “B is better” only if direction agrees in both regimes, **or** explicitly qualify  
 (*B wins under matched info, loses under matched FLOPs* = more expensive representation).

@@ -1,0 +1,247 @@
+[
+  {
+    "confounding_strength": 0.0,
+    "heuristic_confusion_matrix": {
+      "a_causes_b": {
+        "a_causes_b": 24,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 1
+      },
+      "b_causes_a": {
+        "a_causes_b": 0,
+        "b_causes_a": 23,
+        "common_cause": 0,
+        "spurious": 2
+      },
+      "common_cause": {
+        "a_causes_b": 2,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 23
+      },
+      "spurious": {
+        "a_causes_b": 0,
+        "b_causes_a": 2,
+        "common_cause": 0,
+        "spurious": 23
+      }
+    },
+    "heuristic_regime_accuracy": 0.7,
+    "joint_obs": {
+      "max": 30,
+      "mean": 30.0,
+      "median": 30.0,
+      "min": 30,
+      "n_episodes_lt_2_joint": 0,
+      "n_heuristic_raises": 0,
+      "timestep_mask_frac": {
+        "a_only": 0.0,
+        "b_only": 0.0,
+        "both": 1.0
+      }
+    },
+    "majority_regime_accuracy": 0.25,
+    "n_episodes": 100,
+    "n_steps": 30,
+    "noise_scale": 0.15,
+    "oracle_regime_accuracy": 1.0,
+    "partial_obs_rate": 0.0
+  },
+  {
+    "confounding_strength": 0.0,
+    "heuristic_confusion_matrix": {
+      "a_causes_b": {
+        "a_causes_b": 23,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 2
+      },
+      "b_causes_a": {
+        "a_causes_b": 0,
+        "b_causes_a": 24,
+        "common_cause": 0,
+        "spurious": 1
+      },
+      "common_cause": {
+        "a_causes_b": 0,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 25
+      },
+      "spurious": {
+        "a_causes_b": 0,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 25
+      }
+    },
+    "heuristic_regime_accuracy": 0.72,
+    "joint_obs": {
+      "max": 30,
+      "mean": 26.86,
+      "median": 27.0,
+      "min": 23,
+      "n_episodes_lt_2_joint": 0,
+      "n_heuristic_raises": 0,
+      "timestep_mask_frac": {
+        "a_only": 0.056666666666666664,
+        "b_only": 0.048,
+        "both": 0.8953333333333333
+      }
+    },
+    "majority_regime_accuracy": 0.25,
+    "n_episodes": 100,
+    "n_steps": 30,
+    "noise_scale": 0.15,
+    "oracle_regime_accuracy": 1.0,
+    "partial_obs_rate": 0.1
+  },
+  {
+    "confounding_strength": 0.0,
+    "heuristic_confusion_matrix": {
+      "a_causes_b": {
+        "a_causes_b": 23,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 2
+      },
+      "b_causes_a": {
+        "a_causes_b": 0,
+        "b_causes_a": 25,
+        "common_cause": 0,
+        "spurious": 0
+      },
+      "common_cause": {
+        "a_causes_b": 0,
+        "b_causes_a": 1,
+        "common_cause": 0,
+        "spurious": 24
+      },
+      "spurious": {
+        "a_causes_b": 0,
+        "b_causes_a": 1,
+        "common_cause": 0,
+        "spurious": 24
+      }
+    },
+    "heuristic_regime_accuracy": 0.72,
+    "joint_obs": {
+      "max": 28,
+      "mean": 24.2,
+      "median": 25.0,
+      "min": 19,
+      "n_episodes_lt_2_joint": 0,
+      "n_heuristic_raises": 0,
+      "timestep_mask_frac": {
+        "a_only": 0.09666666666666666,
+        "b_only": 0.09666666666666666,
+        "both": 0.8066666666666666
+      }
+    },
+    "majority_regime_accuracy": 0.25,
+    "n_episodes": 100,
+    "n_steps": 30,
+    "noise_scale": 0.15,
+    "oracle_regime_accuracy": 1.0,
+    "partial_obs_rate": 0.2
+  },
+  {
+    "confounding_strength": 0.0,
+    "heuristic_confusion_matrix": {
+      "a_causes_b": {
+        "a_causes_b": 24,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 1
+      },
+      "b_causes_a": {
+        "a_causes_b": 0,
+        "b_causes_a": 22,
+        "common_cause": 0,
+        "spurious": 3
+      },
+      "common_cause": {
+        "a_causes_b": 0,
+        "b_causes_a": 2,
+        "common_cause": 0,
+        "spurious": 23
+      },
+      "spurious": {
+        "a_causes_b": 1,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 24
+      }
+    },
+    "heuristic_regime_accuracy": 0.7,
+    "joint_obs": {
+      "max": 26,
+      "mean": 20.98,
+      "median": 21.0,
+      "min": 16,
+      "n_episodes_lt_2_joint": 0,
+      "n_heuristic_raises": 0,
+      "timestep_mask_frac": {
+        "a_only": 0.146,
+        "b_only": 0.15466666666666667,
+        "both": 0.6993333333333334
+      }
+    },
+    "majority_regime_accuracy": 0.25,
+    "n_episodes": 100,
+    "n_steps": 30,
+    "noise_scale": 0.15,
+    "oracle_regime_accuracy": 1.0,
+    "partial_obs_rate": 0.3
+  },
+  {
+    "confounding_strength": 0.0,
+    "heuristic_confusion_matrix": {
+      "a_causes_b": {
+        "a_causes_b": 16,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 9
+      },
+      "b_causes_a": {
+        "a_causes_b": 0,
+        "b_causes_a": 20,
+        "common_cause": 0,
+        "spurious": 5
+      },
+      "common_cause": {
+        "a_causes_b": 1,
+        "b_causes_a": 5,
+        "common_cause": 0,
+        "spurious": 19
+      },
+      "spurious": {
+        "a_causes_b": 0,
+        "b_causes_a": 0,
+        "common_cause": 0,
+        "spurious": 25
+      }
+    },
+    "heuristic_regime_accuracy": 0.61,
+    "joint_obs": {
+      "max": 21,
+      "mean": 15.2,
+      "median": 15.0,
+      "min": 9,
+      "n_episodes_lt_2_joint": 0,
+      "n_heuristic_raises": 0,
+      "timestep_mask_frac": {
+        "a_only": 0.24466666666666667,
+        "b_only": 0.24866666666666667,
+        "both": 0.5066666666666667
+      }
+    },
+    "majority_regime_accuracy": 0.25,
+    "n_episodes": 100,
+    "n_steps": 30,
+    "noise_scale": 0.15,
+    "oracle_regime_accuracy": 1.0,
+    "partial_obs_rate": 0.5
+  }
+]

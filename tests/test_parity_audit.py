@@ -6,6 +6,8 @@ import inspect
 
 from obs_codecs.encode_a import encode_A, parse_A
 from obs_codecs.encode_b import encode_B, parse_B
+from obs_codecs.encode_c import encode_C, parse_C
+from obs_codecs.encode_d import encode_D, parse_D
 from obs_codecs.parity_audit import run_parity_audit
 from world.parity_fixtures import sample_parity_states
 from world.schema import (
@@ -46,6 +48,26 @@ def test_parity_audit_codec_b_full_pass() -> None:
     """Same shared runner as A; Codec B encode/parse injected only."""
     observations = [observe(s) for s in sample_parity_states()]
     report = run_parity_audit(observations, encode=encode_B, parse=parse_B)
+    assert report.ok
+    assert report.pass_rate == 1.0
+    assert report.n_total == len(observations)
+    assert report.mismatches == ()
+
+
+def test_parity_audit_codec_c_full_pass() -> None:
+    """Same shared runner as A/B; Codec C encode/parse injected only."""
+    observations = [observe(s) for s in sample_parity_states()]
+    report = run_parity_audit(observations, encode=encode_C, parse=parse_C)
+    assert report.ok
+    assert report.pass_rate == 1.0
+    assert report.n_total == len(observations)
+    assert report.mismatches == ()
+
+
+def test_parity_audit_codec_d_full_pass() -> None:
+    """Same shared runner as A/B/C; Codec D encode/parse injected only."""
+    observations = [observe(s) for s in sample_parity_states()]
+    report = run_parity_audit(observations, encode=encode_D, parse=parse_D)
     assert report.ok
     assert report.pass_rate == 1.0
     assert report.n_total == len(observations)

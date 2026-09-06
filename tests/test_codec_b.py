@@ -6,12 +6,21 @@ import inspect
 
 import pytest
 
-from obs_codecs.encode_b import encode_B, observation_from_B, parse_B
+from obs_codecs.encode_b import (
+    decode_B_facts,
+    decode_B_facts_unordered,
+    encode_B,
+    observation_from_B,
+    observation_from_B_unordered,
+    parse_B,
+)
+from world.parity_fixtures import sample_diverse_parity_states
 from world.schema import (
     NoiseBin,
     Observation,
     SensorSource,
     facts_from_observation,
+    observe,
 )
 
 
@@ -103,3 +112,40 @@ def test_codec_a_and_b_recover_same_facts() -> None:
 
     obs = _obs()
     assert parse_A(encode_A(obs)) == parse_B(encode_B(obs)) == facts_from_observation(obs)
+
+
+def test_unordered_parser_agrees_with_position_parser_on_natural_b() -> None:
+    """Regression: on encode_B's own order, unordered ≡ position-based parser."""
+    observations = [observe(s) for s in sample_diverse_parity_states(target_n=500)]
+    assert len(observations) == 500
+
+    for obs in observations:
+        text = encode_B(obs)
+        ordered = observation_from_B(text)
+        unordered = observation_from_B_unordered(text)
+        assert unordered == ordered == obs
+        assert decode_B_facts_unordered(text) == decode_B_facts(text)
+
+
+def test_unordered_parser_rejects_duplicate_a_event() -> None:
+    text = (
+        "(observe A=0.41) → (co-vary B=0.38) → (miss A) → "
+        "(meta n=3 source=sensor_both noise=high)"
+    )
+    with pytest.raises(ValueError, match="exactly one A-event"):
+        observation_from_B_unordered(text)
+
+
+def test_unordered_parser_rejects_missing_meta_event() -> None:
+    text = "(observe A=0.41) → (co-vary B=0.38)"
+    with pytest.raises(ValueError, match="exactly one meta event"):
+        observation_from_B_unordered(text)
+
+
+def test_unordered_parser_rejects_unrecognized_token() -> None:
+    text = (
+        "(observe A=0.41) → (co-vary B=0.38) → "
+        "(link A~B strength=high)"
+    )
+    with pytest.raises(ValueError, match="Unrecognized Codec B event token"):
+        observation_from_B_unordered(text)

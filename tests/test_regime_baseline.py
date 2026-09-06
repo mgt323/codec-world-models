@@ -119,12 +119,25 @@ def test_difficulty_sweep_smoke() -> None:
     rows = difficulty_sweep(
         noise_scale_values=[0.15],
         confounding_strength_values=[0.0],
+        partial_obs_rate_values=[0.0, 0.2],
         n_episodes_per_cell=40,
         n_steps=20,
     )
-    assert len(rows) == 1
-    row = rows[0]
-    assert row["oracle_regime_accuracy"] == 1.0
-    assert "heuristic_confusion_matrix" in row
-    cm = row["heuristic_confusion_matrix"]
-    assert set(cm.keys()) == {r.value for r in CausalRegime}
+    assert len(rows) == 2
+    assert {row["partial_obs_rate"] for row in rows} == {0.0, 0.2}
+    for row in rows:
+        assert row["oracle_regime_accuracy"] == 1.0
+        assert "heuristic_confusion_matrix" in row
+        cm = row["heuristic_confusion_matrix"]
+        assert set(cm.keys()) == {r.value for r in CausalRegime}
+
+
+def test_default_difficulty_v0_locked_fields() -> None:
+    """Single source of truth matches PROGRAM_SPEC locked operating point."""
+    from world.simulate import DEFAULT_DIFFICULTY_V0
+
+    assert DEFAULT_DIFFICULTY_V0.noise_scale == 0.15
+    assert DEFAULT_DIFFICULTY_V0.regime_switch_rate == 0.0
+    assert DEFAULT_DIFFICULTY_V0.partial_obs_rate == 0.2
+    assert DEFAULT_DIFFICULTY_V0.confounding_strength == 0.0
+
