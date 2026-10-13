@@ -27,7 +27,9 @@ def test_tokenize_splits_ident_number_and_punct() -> None:
     assert ":" in tokens
     assert "value" in tokens
     assert "=" in tokens
-    assert "0.41" in tokens
+    # regex_v4: number spans split into character tokens
+    assert tokens[tokens.index("=") + 1 : tokens.index("=") + 5] == ["0", ".", "4", "1"]
+    assert "0.41" not in tokens
     assert "," in tokens
     assert "present" in tokens
     assert "." in tokens
@@ -51,26 +53,35 @@ def test_compute_diagnostics_codec_a() -> None:
     assert report.avg_string_length_chars > 0
     assert report.total_tokens == int(report.avg_tokens_per_observation)
     assert sum(report.token_histogram.values()) == report.total_tokens
-    assert report.tokenization_scheme.startswith("regex_v3")
+    assert report.tokenization_scheme.startswith("regex_v4")
 
 
 def test_tokenize_keeps_codec_d_semicolon() -> None:
-    """v3 scheme: Codec D field separators are tokens, not dropped."""
+    """v3 glyph set: Codec D field separators are tokens, not dropped."""
     tokens = tokenize("A.x=None; A.obs=0; noise=high")
     assert ";" in tokens
     assert "None" in tokens
     assert "A" in tokens  # 'A.x' splits as A . x under this scheme
+    assert "0" in tokens  # obs flag digit piece
 
 
 def test_tokenize_keeps_bag_pipe() -> None:
-    """v2 scheme: bag_b pipe is a token, not dropped."""
+    """v2 glyph set: bag_b pipe is a token, not dropped."""
     tokens = tokenize("(observe A=0.41) | (miss B)")
     assert "|" in tokens
     assert "observe" in tokens
+    assert tokens[tokens.index("=") + 1 : tokens.index("=") + 5] == ["0", ".", "4", "1"]
 
 
-def test_regex_v3_covers_all_shipped_codec_surfaces() -> None:
-    """No non-whitespace residue after tokenize — guards silent v4 pressure."""
+def test_tokenize_digit_level_number_spans() -> None:
+    """regex_v4: floats and signed ints become per-character tokens."""
+    assert tokenize("A=0.41") == ["A", "=", "0", ".", "4", "1"]
+    assert tokenize("n=-12") == ["n", "=", "-", "1", "2"]
+    assert tokenize("x=3") == ["x", "=", "3"]
+
+
+def test_regex_v4_covers_all_shipped_codec_surfaces() -> None:
+    """No non-whitespace residue after the match pattern — guards silent v5 pressure."""
     import re
 
     from obs_codecs.diagnostics import _TOKEN_RE
@@ -103,7 +114,7 @@ def test_regex_v3_covers_all_shipped_codec_surfaces() -> None:
         for text in encode_paths(obs):
             leftover = re.sub(r"\s+", "", _TOKEN_RE.sub("", text))
             uncovered.update(leftover)
-    assert not uncovered, f"regex_v3 leaves uncovered glyphs: {sorted(uncovered)!r}"
+    assert not uncovered, f"regex_v4 leaves uncovered glyphs: {sorted(uncovered)!r}"
 
 
 def test_diagnostics_module_is_codec_agnostic() -> None:

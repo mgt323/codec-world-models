@@ -110,22 +110,42 @@ mislabeled as relational 'strength'.
 ### Model
 
 ```text
-forward: TokenSequence -> Logits
+forward: (TokenSequence, segment_ids) -> Logits
 ```
 
-- One shared architecture for all codecs in a comparison.
+- One shared architecture for all codecs in a comparison
+  (`architecture_id = dec_only_v0_L1024_d384_l6_h6_ff1536_vpad48`).
 - Stage-1 objective: next-token prediction in that codec’s alphabet only.
 - Must not take `Observation`, `State`, or `LatentState` as side inputs.
+- Forward accepts `segment_ids` and derives the attention mask internally
+  (`mask_source = segment_ids`); callers do not pass a pre-computed dense mask.
+
+**Locked fairness decisions** (full rationales in `model/README.md`):
+
+1. **\(L = 1024\)** — fixed context; document-masked packing with `<bos>`/`<eos>`
+   boundaries and explicit `segment_ids` (`COMPUTE_MATCH_BUDGETS.md` §4;
+   rejected 512 / 2048 for pilot FLOPs vs fragmentation).
+2. **Shared vocab pad 48** — embedding + LM-head tables sized to 48 for every
+   codec so `model_param_count` is identical (rejected variable native sizes
+   30–42 as a reporting confound).
+3. **Trunk-shared init + codec-tagged emb/head** — trunk from `model_init_seed`;
+   emb/head from `blake2b_u64(f"{model_init_seed}:{codec}")` (same recipe as
+   `derive_transform_seed`).
 
 ### Trainer
 
 ```text
-train_step: (TokenSequence batch, Model) -> loss
+train_step: (TokenSequence batch, segment_ids, Model) -> loss
 ```
 
 - **MUST NOT** depend on evaluator targets (regime id, intervention outcomes, counterfactuals, probe labels).
-- Loss = autoregressive NLL (or declared equivalent) on codec tokens.
+- Loss = autoregressive NLL (or declared equivalent) on codec tokens; pads masked out.
+- Stopping criterion: exactly `n_episodes` episode presentations from the locked
+  budget table (derive optimizer steps from that consumption — do not invent an
+  independent step budget).
+- Scoring checkpoint: **final only** (`TRAINING_RUNNER_CONTRACT.md` §2.6).
 - No auxiliary heads trained in stage 1 that require `LatentState`.
+- Config fields consumed: only those in the runner-contract §2 schema.
 
 ### Evaluator
 
@@ -326,7 +346,7 @@ metrics = evaluate(pred, gt)
 | Compute-matched | FLOPs or token-updates (and logged architecture) |
 | Info-matched | number of episodes / states \(O_{1:T}\) |
 
-Token-update accounting for compute-matched runs uses the locked provisional scheme `regex_v3` (`obs_codecs.diagnostics.TOKENIZATION_SCHEME`) until a trained tokenizer is declared. Optional C-shuffle / A-bag are reorder-only and must not add punctuation without a scheme version bump and budget recomputation.
+Token-update accounting for compute-matched runs uses the locked provisional scheme `regex_v4` (`obs_codecs.diagnostics.TOKENIZATION_SCHEME`: number spans → digit/`-`/`.` character tokens; codec strings unchanged) until a trained tokenizer is declared. **Rejected alternatives:** rounding `_format_value` (FactRecord bin-flip); bin-index surface (narrows eval task #1 MSE). Optional C-shuffle / A-bag are reorder-only and must not add punctuation without a scheme version bump and budget recomputation.
 
 Both must log: git commit, config, seeds, dataset checksum, param count, tokens, steps, FLOPs estimate (see reproducibility rule).
 

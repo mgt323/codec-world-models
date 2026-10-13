@@ -2,9 +2,20 @@
 
 from .diagnostics import (
     CodecDiagnostics,
+    TOKENIZATION_SCHEME,
+    TOKENIZATION_SCHEME_VERSION,
     compute_codec_diagnostics,
     tokenize,
     write_diagnostics_json,
+)
+from .vocab import (
+    SPECIAL_TOKENS,
+    VocabArtifact,
+    VocabReport,
+    build_and_save_vocabs,
+    build_vocab,
+    load_vocab,
+    save_vocab,
 )
 from .encode_a import decode_A_facts, encode_A, observation_from_A, parse_A
 from .encode_b import (
@@ -23,25 +34,34 @@ from .parity_audit import (
     ParseFactsFn,
     run_parity_audit,
 )
-from .transforms_e import bag_b, derive_transform_seed, reverse_b, shuffle_b
+from .transforms_e import bag_b, blake2b_u64, derive_transform_seed, reverse_b, shuffle_b
 
 __all__ = [
     "CodecDiagnostics",
     "ParityAuditReport",
     "ParityMismatch",
     "ParseFactsFn",
+    "SPECIAL_TOKENS",
+    "TOKENIZATION_SCHEME",
+    "TOKENIZATION_SCHEME_VERSION",
+    "VocabArtifact",
+    "VocabReport",
     "bag_b",
+    "build_and_save_vocabs",
+    "build_vocab",
     "compute_codec_diagnostics",
     "decode_A_facts",
     "decode_B_facts",
     "decode_B_facts_unordered",
     "decode_C_facts",
     "decode_D_facts",
+    "blake2b_u64",
     "derive_transform_seed",
     "encode_A",
     "encode_B",
     "encode_C",
     "encode_D",
+    "load_vocab",
     "observation_from_A",
     "observation_from_B",
     "observation_from_B_unordered",
@@ -53,6 +73,7 @@ __all__ = [
     "parse_D",
     "reverse_b",
     "run_parity_audit",
+    "save_vocab",
     "shuffle_b",
     "tokenize",
     "write_diagnostics_json",

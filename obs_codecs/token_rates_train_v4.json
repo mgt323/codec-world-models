@@ -1,0 +1,77 @@
+{
+  "role": "authoritative_token_rates_for_compute_matched_budgets",
+  "split": "train",
+  "n_steps_assumed": 30,
+  "tokenization_scheme": "regex_v4: ident|number->chars|:=,.;(){}|~→↑? ; whitespace-separated",
+  "tokenizer_scheme_version": "regex_v4",
+  "build_utc": "2026-09-07T07:39:30Z",
+  "git_commit": "b80345c7f10ea9d786079efd2a8c3b2627178534",
+  "encoded_dir": "artifacts/encoded",
+  "avg_tokens_per_observation": {
+    "A": 72.29188333333333,
+    "B": 45.88755,
+    "C": 49.29188333333333,
+    "D": 55.29188333333333
+  },
+  "avg_tokens_per_observation_rounded_3dp": {
+    "A": 72.292,
+    "B": 45.888,
+    "C": 49.292,
+    "D": 55.292
+  },
+  "codecs": {
+    "A": {
+      "n_observations": 60000,
+      "total_tokens": 4337513,
+      "avg_tokens_per_observation": 72.29188333333333,
+      "tokens_per_episode_at_n_steps": 2168.7565,
+      "source_parquet": "artifacts/encoded/train_A.parquet"
+    },
+    "B": {
+      "n_observations": 60000,
+      "total_tokens": 2753253,
+      "avg_tokens_per_observation": 45.88755,
+      "tokens_per_episode_at_n_steps": 1376.6264999999999,
+      "source_parquet": "artifacts/encoded/train_B.parquet"
+    },
+    "C": {
+      "n_observations": 60000,
+      "total_tokens": 2957513,
+      "avg_tokens_per_observation": 49.29188333333333,
+      "tokens_per_episode_at_n_steps": 1478.7565,
+      "source_parquet": "artifacts/encoded/train_C.parquet"
+    },
+    "D": {
+      "n_observations": 60000,
+      "total_tokens": 3317513,
+      "avg_tokens_per_observation": 55.29188333333333,
+      "tokens_per_episode_at_n_steps": 1658.7565,
+      "source_parquet": "artifacts/encoded/train_D.parquet"
+    }
+  },
+  "b_family_inherited": {
+    "B_shuffle": {
+      "avg_tokens_per_observation": 45.88755,
+      "tokens_per_episode_at_n_steps": 1376.6264999999999,
+      "inherited_from": "B",
+      "note": "B-family shares B rates under regex_v4 (COMPUTE_MATCH_BUDGETS.md §4)."
+    },
+    "B_reverse": {
+      "avg_tokens_per_observation": 45.88755,
+      "tokens_per_episode_at_n_steps": 1376.6264999999999,
+      "inherited_from": "B",
+      "note": "B-family shares B rates under regex_v4 (COMPUTE_MATCH_BUDGETS.md §4)."
+    },
+    "B_bag": {
+      "avg_tokens_per_observation": 45.88755,
+      "tokens_per_episode_at_n_steps": 1376.6264999999999,
+      "inherited_from": "B",
+      "note": "B-family shares B rates under regex_v4 (COMPUTE_MATCH_BUDGETS.md §4)."
+    }
+  },
+  "notes": [
+    "Rates measured by re-tokenizing encoded train parquet under regex_v4 (strings unchanged).",
+    "Use this file for COMPUTE_MATCH_BUDGETS.md / train configs.",
+    "obs_codecs/diagnostics_comparison_ABCD.json is parity-sample diagnostics only — not a rate source for budgeting."
+  ]
+}

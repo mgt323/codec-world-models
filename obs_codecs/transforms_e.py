@@ -30,15 +30,21 @@ from obs_codecs.encode_b import ARROW_SEP, BAG_SEP, split_b_events
 _TRANSFORM_SEED_MASK = (1 << 64) - 1
 
 
+def blake2b_u64(payload: str) -> int:
+    """Stable u64 seed from a UTF-8 payload (blake2b-8, little-endian).
+
+    Never uses Python's builtin ``hash()`` (unstable across runs/interpreters).
+    Shared by E-transform seeds and model embedding/head init seeds.
+    """
+    digest = hashlib.blake2b(payload.encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "little") & _TRANSFORM_SEED_MASK
+
+
 def derive_transform_seed(episode_seed: int, timestep: int, variant_name: str) -> int:
     """Stable, process-independent seed for E-transforms.
 
-    Never uses Python's builtin ``hash()`` (unstable across runs/interpreters).
-
-    Payload is the UTF-8 encoding of
-    ``f"{episode_seed}:{timestep}:{variant_name}"``. Digest is blake2b
-    truncated to 8 bytes, interpreted little-endian and masked to
-    ``[0, 2**64)`` so it seeds ``random.Random`` (used by ``shuffle_b`` /
+    Payload is ``f"{episode_seed}:{timestep}:{variant_name}"`` hashed via
+    :func:`blake2b_u64` so it seeds ``random.Random`` (used by ``shuffle_b`` /
     ``bag_b``) and would also be valid for ``numpy.random.Generator`` /
     PCG64 if that family is adopted later.
 
@@ -46,9 +52,7 @@ def derive_transform_seed(episode_seed: int, timestep: int, variant_name: str) -
     ``"bag_b"`` get independent permutations at the same
     ``(episode_seed, timestep)``.
     """
-    payload = f"{episode_seed}:{timestep}:{variant_name}".encode("utf-8")
-    digest = hashlib.blake2b(payload, digest_size=8).digest()
-    return int.from_bytes(digest, "little") & _TRANSFORM_SEED_MASK
+    return blake2b_u64(f"{episode_seed}:{timestep}:{variant_name}")
 
 
 def shuffle_b(text: str, seed: int) -> str:

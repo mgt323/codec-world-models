@@ -214,7 +214,7 @@ Always report:
 1. **Compute-matched:** fixed FLOPs (or fixed token-updates).
 2. **Info-matched:** fixed number of episodes / states \(O_{1:T}\).
 
-Provisional token counts for diagnostics and compute-matched token-update budgets use the locked shared scheme ``regex_v3`` in `obs_codecs/diagnostics.py` (covers A–D and B-E; reorder-only optional C-shuffle / A-bag need no new glyphs). Do not change that scheme after budgets are computed without an explicit methodological bump and full budget recomputation. A trained model tokenizer may replace it later as a declared change.
+Provisional token counts for diagnostics and compute-matched token-update budgets use the locked shared scheme ``regex_v4`` in `obs_codecs/diagnostics.py` (covers A–D and B-E; digit-level split of matched number spans; reorder-only optional C-shuffle / A-bag need no new glyphs). Encoded codec strings are unchanged — tokenizer-only. **Rejected:** rounding `_format_value` (breaks FactRecord / `quantize_value` agreement via bin-flips); bin-index surface tokens (drops continuous values needed for eval task #1 MSE next-state). Do not change that scheme after budgets are computed without an explicit methodological bump and full budget recomputation. A trained model tokenizer may replace it later as a declared change.
 
 Accept “B is better” only if direction agrees in both regimes, **or** explicitly qualify  
 (*B wins under matched info, loses under matched FLOPs* = more expensive representation).

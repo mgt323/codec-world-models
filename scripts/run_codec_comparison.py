@@ -80,6 +80,10 @@ def build_comparison(
     }
 
     payload: dict[str, object] = {
+        "role": (
+            "parity-sample diagnostics, not a rate source for budgeting"
+        ),
+        "budget_rate_source": "obs_codecs/token_rates_train_v4.json",
         "n_observations": len(observations),
         "target_n": target_n,
         "same_sample": True,
