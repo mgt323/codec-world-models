@@ -29,7 +29,9 @@ include = [
     "configs*",
     "data*",
     "eval*",
+    "model*",
     "obs_codecs*",
+    "train*",
     "world*",
 ]
 exclude = [
@@ -41,3 +43,6 @@ exclude = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "integration: real artifacts / full packer→model pipeline checks",
+]
