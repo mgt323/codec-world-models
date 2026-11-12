@@ -1,6 +1,6 @@
 """Generate raw State episode datasets (HDF5 + seed checksum manifest).
 
-Locked split parameters: ``configs.dataset_v0`` (PROGRAM_SPEC.md Dataset
+Locked split parameters: ``configs.dataset_v0`` (docs/PROGRAM_SPEC.md Dataset
 splits). Emits active splits only — ``ood_noise`` remains deferred until an
 OOD ``noise_scale`` is locked (do not invent one here).
 

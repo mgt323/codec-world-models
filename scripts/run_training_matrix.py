@@ -1,6 +1,6 @@
 """Run the stage-1 training matrix for one budget profile (tier).
 
-Implements TRAINING_RUNNER_CONTRACT.md §4. Budgets are derived from the §0
+Implements docs/TRAINING_RUNNER_CONTRACT.md §4. Budgets are derived from the §0
 formula at the tier's pool size — no per-tier literals. Aggregation (§5) is not
 implemented: no ``metrics_eval.json`` producer exists yet.
 

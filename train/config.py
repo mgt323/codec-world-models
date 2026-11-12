@@ -1,7 +1,7 @@
-"""RunConfig schema matching TRAINING_RUNNER_CONTRACT.md §2.
+"""RunConfig schema matching docs/TRAINING_RUNNER_CONTRACT.md §2.
 
 Budgets are **derived**, never hardcoded per tier: one formula from
-``COMPUTE_MATCH_BUDGETS.md`` §0 instantiated at a profile's pool size.
+``docs/COMPUTE_MATCH_BUDGETS.md`` §0 instantiated at a profile's pool size.
 At ``pool_episodes = 50_000`` it reproduces the locked v0 table exactly.
 """
 
@@ -28,7 +28,7 @@ ADAM_BETAS = (0.9, 0.95)
 # Episode length (configs.dataset_v0.N_STEPS_V0); not a scaling axis.
 N_STEPS_V0 = 30
 
-# COMPUTE_MATCH_BUDGETS.md §0: treat the three-decimal rates as exact decimals
+# docs/COMPUTE_MATCH_BUDGETS.md §0: treat the three-decimal rates as exact decimals
 # for budget arithmetic (not IEEE float intermediates).
 AVG_TOKENS_PER_OBSERVATION: dict[str, Decimal] = {
     "A": Decimal("72.292"),
@@ -37,7 +37,7 @@ AVG_TOKENS_PER_OBSERVATION: dict[str, Decimal] = {
     "D": Decimal("55.292"),
 }
 
-# E-variants inherit B's rate (COMPUTE_MATCH_BUDGETS.md §4.2).
+# E-variants inherit B's rate (docs/COMPUTE_MATCH_BUDGETS.md §4.2).
 RATE_GROUP: dict[str, str] = {
     "A": "A",
     "B": "B",
@@ -65,7 +65,7 @@ class BudgetProfile:
     ``pool_episodes`` is the unique train-episode pool at this scale; it is
     simultaneously the ``info_matched`` episode count and the anchor for
     ``T_target``. Scaling is a single constant shared by every codec and
-    replication, with floor re-applied per codec (COMPUTE_MATCH_BUDGETS.md §4.7).
+    replication, with floor re-applied per codec (docs/COMPUTE_MATCH_BUDGETS.md §4.7).
     """
 
     name: str
@@ -188,7 +188,7 @@ _SCHEMA_FIELDS = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class RunConfig:
-    """Single-run config; fields mirror TRAINING_RUNNER_CONTRACT.md §2."""
+    """Single-run config; fields mirror docs/TRAINING_RUNNER_CONTRACT.md §2."""
 
     codec: str
     match_regime: str

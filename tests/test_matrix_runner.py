@@ -1,7 +1,7 @@
 """Training-matrix expansion, budget derivation, resume, and manifest atomicity.
 
-Covers TRAINING_RUNNER_CONTRACT.md §4 for the pilot tiers plus the drift guard
-that the derived ``full_v0`` table still equals COMPUTE_MATCH_BUDGETS.md.
+Covers docs/TRAINING_RUNNER_CONTRACT.md §4 for the pilot tiers plus the drift guard
+that the derived ``full_v0`` table still equals docs/COMPUTE_MATCH_BUDGETS.md.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def _load_script():
     return module
 
 
-# COMPUTE_MATCH_BUDGETS.md §1 / §2 tables, transcribed as the drift reference.
+# docs/COMPUTE_MATCH_BUDGETS.md §1 / §2 tables, transcribed as the drift reference.
 _LOCKED_FULL_V0 = {
     "A": {"cm_n": 50_000, "cm_t": 108_438_000.0, "im_t": 108_438_000.0},
     "B": {"cm_n": 78_770, "cm_t": 108_437_932.8, "im_t": 68_832_000.0},

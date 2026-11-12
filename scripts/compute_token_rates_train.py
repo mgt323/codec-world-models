@@ -2,7 +2,7 @@
 
 Writes ``obs_codecs/token_rates_train_v4.json`` from encoded train parquet
 (``artifacts/encoded/train_{A,B,C,D}.parquet`` by default). This file is the
-authoritative rate source for ``COMPUTE_MATCH_BUDGETS.md``; do not use
+authoritative rate source for ``docs/COMPUTE_MATCH_BUDGETS.md``; do not use
 ``diagnostics_comparison_ABCD.json`` (parity sample only).
 """
 
@@ -78,7 +78,7 @@ def build_payload(*, encoded_dir: Path, n_steps: int) -> dict[str, object]:
             "inherited_from": "B",
             "note": (
                 "B-family shares B rates under regex_v4 "
-                "(COMPUTE_MATCH_BUDGETS.md §4)."
+                "(docs/COMPUTE_MATCH_BUDGETS.md §4)."
             ),
         }
         for stem in B_FAMILY
@@ -106,7 +106,7 @@ def build_payload(*, encoded_dir: Path, n_steps: int) -> dict[str, object]:
         "notes": [
             "Rates measured by re-tokenizing encoded train parquet under "
             f"{TOKENIZATION_SCHEME_VERSION} (strings unchanged).",
-            "Use this file for COMPUTE_MATCH_BUDGETS.md / train configs.",
+            "Use this file for docs/COMPUTE_MATCH_BUDGETS.md / train configs.",
             "obs_codecs/diagnostics_comparison_ABCD.json is parity-sample "
             "diagnostics only — not a rate source for budgeting.",
         ],

@@ -1,6 +1,6 @@
 """E-variants: structure-destroyed transforms of Codec B strings.
 
-These are NOT Observation→string codecs. Per EXPERIMENT_PLAN.md §3
+These are NOT Observation→string codecs. Per docs/EXPERIMENT_PLAN.md §3
 (Structure-destroyed controls on B), each transform takes ``encode_B(obs)``
 output and destroys event *organization* while preserving recoverable
 facts under ``observation_from_B_unordered``.

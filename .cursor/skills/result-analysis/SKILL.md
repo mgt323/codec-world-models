@@ -12,7 +12,7 @@ disable-model-invocation: true
 
 Analyze completed runs without changing methodology or re-training unless asked.
 
-Follow `EXPERIMENT_PLAN.md` §5 (matching), §8 (allowed conclusions), and multi-seed reporting (median + IQR / bootstrap).
+Follow `docs/EXPERIMENT_PLAN.md` §5 (matching), §8 (allowed conclusions), and multi-seed reporting (median + IQR / bootstrap).
 
 ## Workflow
 

@@ -1,6 +1,6 @@
 """Stage-1 next-token training loop (single run).
 
-Consumes only ``RunConfig`` fields from TRAINING_RUNNER_CONTRACT.md §2.
+Consumes only ``RunConfig`` fields from docs/TRAINING_RUNNER_CONTRACT.md §2.
 Stopping criterion: exactly ``n_episodes`` episode presentations.
 Scoring checkpoint: final only; intermediate files tagged ``non_scoring``.
 """

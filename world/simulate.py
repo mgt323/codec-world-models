@@ -1,6 +1,6 @@
 """World v0 simulator: deterministic 1D causal toy episodes.
 
-Implements EXPERIMENT_PLAN.md §2 / §2.1 and PROGRAM_SPEC Simulator +
+Implements docs/EXPERIMENT_PLAN.md §2 / §2.1 and PROGRAM_SPEC Simulator +
 Interventions (option B). Same ``(seed, n_steps, difficulty, interventions)``
 ⇒ identical ``list[State]`` (INVARIANT I3).
 

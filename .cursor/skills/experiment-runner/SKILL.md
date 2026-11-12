@@ -12,7 +12,7 @@ disable-model-invocation: true
 
 Run **one** comparable experiment unit (one codec × match regime × seed), not the full matrix unless asked.
 
-Follow `EXPERIMENT_PLAN.md` and project rules `01-experiment-integrity`, `02-reproducibility`.
+Follow `docs/EXPERIMENT_PLAN.md` and project rules `01-experiment-integrity`, `02-reproducibility`.
 
 ## Workflow
 

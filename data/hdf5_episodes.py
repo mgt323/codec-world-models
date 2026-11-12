@@ -1,4 +1,4 @@
-"""HDF5 persistence for raw State episode datasets (EXPERIMENT_PLAN.md §9).
+"""HDF5 persistence for raw State episode datasets (docs/EXPERIMENT_PLAN.md §9).
 
 Flat column schema mirrors ``State`` fields; ``LatentState`` is flattened to
 ``latent_*`` columns. Codec encoding / tokenization is out of scope here.

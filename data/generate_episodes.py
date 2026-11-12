@@ -1,10 +1,10 @@
-"""Raw State episode generation for dataset splits (EXPERIMENT_PLAN.md §9).
+"""Raw State episode generation for dataset splits (docs/EXPERIMENT_PLAN.md §9).
 
 This module produces ``list[State]`` episodes only. It must not import or call
 ``obs_codecs`` — codec strings are tokenized offline or on-the-fly as a later
 step over this dataset.
 
-Difficulty values for active splits are defined in PROGRAM_SPEC.md
+Difficulty values for active splits are defined in docs/PROGRAM_SPEC.md
 (``DEFAULT_DIFFICULTY_V0`` + OOD table). This function accepts an explicit
 ``Difficulty``; mapping split names to those locked values is orchestration
 (not implemented here).
@@ -25,7 +25,7 @@ intervention_fraction)`` always yields the same sequence of
 enter the seed formula — disjoint train/val seeds come from distinct
 ``base_seed`` values chosen by the caller.
 
-Separate intervention / counterfactual sets (EXPERIMENT_PLAN.md §9) use
+Separate intervention / counterfactual sets (docs/EXPERIMENT_PLAN.md §9) use
 ``generate_intervention_episode`` and ``generate_counterfactual_pair`` —
 not ``generate_split``.
 """
@@ -137,7 +137,7 @@ def generate_intervention_episode(
     """Simulate one episode with an optional scheduled intervention.
 
     Named entrypoint for the separate intervention episode set
-    (EXPERIMENT_PLAN.md §9). Thin wrapper over ``simulate`` — does not
+    (docs/EXPERIMENT_PLAN.md §9). Thin wrapper over ``simulate`` — does not
     participate in ``generate_split``.
     """
     interventions = (intervention,) if intervention is not None else None
@@ -157,7 +157,7 @@ def generate_counterfactual_pair(
 ) -> tuple[list[State], list[State]]:
     """Observational / intervened twins that share the same noise seed.
 
-    Eval task #4 primitive (EXPERIMENT_PLAN.md §7 / §9): both episodes use
+    Eval task #4 primitive (docs/EXPERIMENT_PLAN.md §7 / §9): both episodes use
     ``seed``, so ``simulate``'s fixed per-step draw order yields identical
     noise realizations; only the ``do()`` schedule differs.
 
@@ -175,7 +175,7 @@ def generate_counterfactual_pair(
 def _validate_split_name(split_name: str) -> None:
     if split_name in DEFERRED_SPLIT_NAMES:
         raise ValueError(
-            f"split_name={split_name!r} is deferred in PROGRAM_SPEC.md v0 "
+            f"split_name={split_name!r} is deferred in docs/PROGRAM_SPEC.md v0 "
             "(axis not unlocked); do not generate this split yet"
         )
     if split_name not in ACTIVE_SPLIT_NAMES:

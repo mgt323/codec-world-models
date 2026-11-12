@@ -34,5 +34,5 @@ When proposing an implementation that could alter experimental validity:
 3. identify the affected comparison,
 4. propose the smallest valid alternative.
 
-Treat EXPERIMENT_PLAN.md as the scientific specification.
+Treat docs/EXPERIMENT_PLAN.md as the scientific specification.
 Code must conform to the experiment, not redefine it.

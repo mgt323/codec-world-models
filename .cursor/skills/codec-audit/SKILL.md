@@ -10,9 +10,9 @@ disable-model-invocation: true
 
 # Codec Audit
 
-**Cel:** Sprawdź, czy A/B/C/D/E rzeczywiście mają identyczną informację.
+**Goal:** Check that A/B/C/D/E actually carry identical information.
 
-Treat `EXPERIMENT_PLAN.md` §1 / §1.1 as the contract. Equality is
+Treat `docs/EXPERIMENT_PLAN.md` §1 / §1.1 as the contract. Equality is
 `parse_k ∘ encode_k = F(O)` on a shared quantized fact schema — not string equality across codecs.
 
 ## Workflow

@@ -252,7 +252,7 @@ def estimate_flops_proxy_token_updates(
 ) -> dict[str, float | int]:
     """Log FLOPs estimate under fixed-L (token-updates proxy).
 
-    Per COMPUTE_MATCH_BUDGETS.md, matched token-updates approx matched FLOPs
+    Per docs/COMPUTE_MATCH_BUDGETS.md, matched token-updates approx matched FLOPs
     when architecture and L are identical; we log the proxy explicitly.
     """
     return {

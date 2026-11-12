@@ -6,7 +6,7 @@ alwaysApply: false
 
 # Python Conventions
 
-Use **Python 3.13.15** (see `TECH_STACK.md`, `.python-version`).
+Use **Python 3.13.15** (see `docs/TECH_STACK.md`, `.python-version`).
 
 Stack: PyTorch, uv, pytest, numpy, scipy, pandas, matplotlib, pydantic/dataclasses, zarr.
 

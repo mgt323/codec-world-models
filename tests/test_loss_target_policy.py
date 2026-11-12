@@ -1,6 +1,6 @@
 """Lock the next-token loss target policy and its per-run diagnostics.
 
-`COMPUTE_MATCH_BUDGETS.md` §4 item 4 accepts cross-segment boundary targets as
+`docs/COMPUTE_MATCH_BUDGETS.md` §4 item 4 accepts cross-segment boundary targets as
 a measured residual rather than masking them. That is a methodological choice,
 so the default must not drift silently, and the diagnostic counters that make
 the residual auditable must stay correct.

@@ -1,6 +1,6 @@
 """Training-matrix expansion, resume state, and manifest I/O.
 
-Implements TRAINING_RUNNER_CONTRACT.md §4 (expansion, per-run outputs,
+Implements docs/TRAINING_RUNNER_CONTRACT.md §4 (expansion, per-run outputs,
 entrypoint responsibilities). Aggregation (§5) is deliberately not implemented:
 no ``metrics_eval.json`` producer exists yet, so there is nothing to aggregate.
 """

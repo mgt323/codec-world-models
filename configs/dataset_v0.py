@@ -1,4 +1,4 @@
-"""Locked v0 dataset split parameters (PROGRAM_SPEC.md Dataset splits).
+"""Locked v0 dataset split parameters (docs/PROGRAM_SPEC.md Dataset splits).
 
 Single source of truth for ``scripts/generate_dataset.py``. Difficulty for
 train/val is ``DEFAULT_DIFFICULTY_V0`` from ``world.simulate`` — do not

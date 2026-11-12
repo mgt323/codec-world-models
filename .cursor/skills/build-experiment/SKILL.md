@@ -1,12 +1,12 @@
 ---
 name: build-experiment
-description: Implement experiment components against EXPERIMENT_PLAN.md without silently changing methodology. Use when adding or modifying world/, obs_codecs/, data/, model/, train/, eval/, or probes/; when the user asks to build, implement, or extend the experiment; or when running a minimal end-to-end slice.
+description: Implement experiment components against docs/EXPERIMENT_PLAN.md without silently changing methodology. Use when adding or modifying world/, obs_codecs/, data/, model/, train/, eval/, or probes/; when the user asks to build, implement, or extend the experiment; or when running a minimal end-to-end slice.
 disable-model-invocation: false
 ---
 
 # Build Experiment
 
-Implement code so it **conforms to** `EXPERIMENT_PLAN.md`. Do not redefine the experiment in code.
+Implement code so it **conforms to** `docs/EXPERIMENT_PLAN.md`. Do not redefine the experiment in code.
 
 ## Workflow
 
@@ -14,7 +14,7 @@ Copy and track:
 
 ```text
 Build progress:
-- [ ] 1. Read EXPERIMENT_PLAN.md (relevant sections only)
+- [ ] 1. Read docs/EXPERIMENT_PLAN.md (relevant sections only)
 - [ ] 2. Inspect relevant modules
 - [ ] 3. Identify invariant interfaces
 - [ ] 4. Implement
@@ -56,7 +56,7 @@ If the request would break an invariant → **stop**, explain risk, name the aff
 ### 4. Implement
 
 - Smallest change that satisfies the plan
-- Typed Python 3.12; dataclasses; explicit RNG objects; no hidden globals
+- Typed Python 3.13.15; dataclasses; explicit RNG objects; no hidden globals
 - Do not mix simulation, encoding, and training in one function
 - Config diffs across comparable runs: only `codec`, `match_regime`, `seed` (shared locked `difficulty`)
 
@@ -86,7 +86,7 @@ End with:
 
 ## Methodology changed?
 - **No** — implementation only; plan invariants preserved
-- **Yes** — what changed, which comparison is affected, whether EXPERIMENT_PLAN.md was updated
+- **Yes** — what changed, which comparison is affected, whether docs/EXPERIMENT_PLAN.md was updated
 ```
 
 If methodology changed and the plan was not updated, say so explicitly and offer to update the plan.
