@@ -58,6 +58,13 @@ pair unrelated symbols to the same random vectors — a silent cross-codec
 coupling. Codec-tagged emb/head init avoids that while preserving paired trunk
 noise. Implementation: `model/init.py`.
 
+## Decision 4 — Numerical precision & boolean SDPA execution (`I5`/`I6`/`I15`)
+
+**Choice:**
+
+1. **Shared boolean `SDPA` mask (`allow.unsqueeze(1)`):** `DecoderOnlyLM.hidden_states()` computes `allow = self.derive_allow_mask(segment_ids)` once per forward pass (`PAD_SEGMENT_ID = -1` + diagonal guard) and passes `allow.unsqueeze(1)` directly to `F.scaled_dot_product_attention`, eliminating 6× per-step `32 MB` float `-inf` mask allocations with `0.0` FP32 numerical discrepancy.
+2. **Uniform `bf16_mixed` autocast on ROCm GPU (`I15`):** Linear projections and `SDPA` run under `torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)` uniformly across all codecs, while model parameters (master weights), `AdamW(fused=True)` moments, `LayerNorm`, and cross-entropy loss stay strictly `fp32`. Static `(8, 1024)` batches use `torch.compile(dynamic=False)` with eager fallback for any partial final batch (`B < 8`); checkpoints (`checkpoints/final.pt`) are always saved unwrapped in FP32. CPU training and frozen `eval/` / `probes/` scoring remain `fp32`.
+
 ## Locked architecture / optimizer ids
 
 | Knob | Value |

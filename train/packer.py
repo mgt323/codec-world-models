@@ -6,6 +6,8 @@ emits parallel ``segment_ids``, and chunks to exactly ``L`` (pad the tail).
 
 from __future__ import annotations
 
+import queue
+import threading
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 
@@ -144,6 +146,7 @@ def iter_packed_windows(
 
     tokens: list[int] = []
     segments: list[int] = []
+    offset = 0
     for seg_id, episode in enumerate(episodes):
         tokens.append(bos_id)
         segments.append(seg_id)
@@ -151,24 +154,29 @@ def iter_packed_windows(
         segments.extend([seg_id] * len(episode))
         tokens.append(eos_id)
         segments.append(seg_id)
-        while len(tokens) >= context_length:
+        while len(tokens) - offset >= context_length:
+            end = offset + context_length
             yield _make_window(
-                tokens[:context_length],
-                segments[:context_length],
+                tokens[offset:end],
+                segments[offset:end],
                 n_content=context_length,
                 context_length=context_length,
                 pad_id=pad_id,
                 pad_segment_id=pad_segment_id,
                 pin_memory=pin_memory,
             )
-            del tokens[:context_length]
-            del segments[:context_length]
-    if tokens:
-        n_content = len(tokens)
+            offset = end
+        if offset >= context_length:
+            tokens = tokens[offset:]
+            segments = segments[offset:]
+            offset = 0
+    if len(tokens) > offset:
+        rem_tok = tokens[offset:]
+        rem_seg = segments[offset:]
         yield _make_window(
-            tokens,
-            segments,
-            n_content=n_content,
+            rem_tok,
+            rem_seg,
+            n_content=len(rem_tok),
             context_length=context_length,
             pad_id=pad_id,
             pad_segment_id=pad_segment_id,
@@ -194,7 +202,7 @@ def iter_packed_batches_streaming(
     for window in iter_packed_windows(
         episodes,
         context_length=context_length,
-        pin_memory=pin_memory,
+        pin_memory=False,
     ):
         ids_buf.append(window.input_ids)
         seg_buf.append(window.segment_ids)
@@ -204,6 +212,58 @@ def iter_packed_batches_streaming(
             seg_buf = []
     if ids_buf:
         yield _stack_batch(ids_buf, seg_buf, pin_memory=pin_memory)
+
+
+def prefetch_batches(
+    batches: Iterator[tuple[torch.Tensor, torch.Tensor]],
+    *,
+    max_prefetch: int = 2,
+) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
+    """Prefetch deterministic ``(input_ids, segment_ids)`` batches on a worker thread."""
+    if max_prefetch <= 0:
+        yield from batches
+        return
+
+    item_queue: queue.Queue[object] = queue.Queue(maxsize=max_prefetch)
+    stop_event = threading.Event()
+    sentinel = object()
+
+    def _put(item: object) -> bool:
+        while not stop_event.is_set():
+            try:
+                item_queue.put(item, timeout=0.05)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def _producer() -> None:
+        try:
+            for batch in batches:
+                if not _put(batch):
+                    return
+            _put(sentinel)
+        except BaseException as exc:  # noqa: BLE001 - propagate exact error to consumer
+            _put(exc)
+
+    worker = threading.Thread(target=_producer, daemon=True, name="batch-prefetch")
+    worker.start()
+    try:
+        while True:
+            item = item_queue.get()
+            if item is sentinel:
+                break
+            if isinstance(item, BaseException):
+                raise item
+            yield item  # type: ignore[misc]
+    finally:
+        stop_event.set()
+        while True:
+            try:
+                item_queue.get_nowait()
+            except queue.Empty:
+                break
+        worker.join(timeout=1.0)
 
 
 def _make_window(

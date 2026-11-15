@@ -16,7 +16,7 @@ Canonical tooling for this repository. Prefer these versions and libraries; do n
 | Plotting | **matplotlib** (optional `analysis` extra; not used by training) |
 | Tests | **pytest** |
 
-`zarr` and `pydantic` are not dependencies. Stage-1 training stays in **fp32**.
+`zarr` and `pydantic` are not dependencies. Under `INVARIANTS.md` §I15, Stage-1 training on ROCm GPU uses uniform **`bf16_mixed`** autocast across all codecs (keeping FP32 master weights, FP32 AdamW moments, FP32 `LayerNorm`, and FP32 cross-entropy loss), while CPU training and frozen `eval/` / `probes/` scoring stay in **`fp32`**.
 
 ## Project files
 

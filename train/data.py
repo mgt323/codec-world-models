@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -97,12 +97,12 @@ def synthetic_episodes(
     return out
 
 
-def present_episode_order(
+def iter_present_episode_order(
     n_pool: int,
     n_presentations: int,
     shuffle_seed: int,
-) -> list[int]:
-    """Reshuffle-per-epoch indices covering exactly ``n_presentations``.
+) -> Iterator[int]:
+    """Yield reshuffle-per-epoch indices covering exactly ``n_presentations``.
 
     Each full pass over the pool uses ``shuffle_seed + epoch`` so order is
     reproducible and differs across epochs.
@@ -114,15 +114,32 @@ def present_episode_order(
     if n_presentations < 1:
         raise ValueError("n_presentations must be positive")
 
-    order: list[int] = []
+    emitted = 0
     epoch = 0
-    while len(order) < n_presentations:
+    while emitted < n_presentations:
         rng = random.Random(shuffle_seed + epoch)
         perm = list(range(n_pool))
         rng.shuffle(perm)
-        order.extend(perm)
+        remaining = n_presentations - emitted
+        if remaining < len(perm):
+            yield from perm[:remaining]
+            return
+        yield from perm
+        emitted += len(perm)
         epoch += 1
-    return order[:n_presentations]
+
+
+def present_episode_order(
+    n_pool: int,
+    n_presentations: int,
+    shuffle_seed: int,
+) -> list[int]:
+    """Reshuffle-per-epoch indices covering exactly ``n_presentations``.
+
+    Each full pass over the pool uses ``shuffle_seed + epoch`` so order is
+    reproducible and differs across epochs.
+    """
+    return list(iter_present_episode_order(n_pool, n_presentations, shuffle_seed))
 
 
 def select_episodes(

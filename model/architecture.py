@@ -98,32 +98,20 @@ class CausalSelfAttention(nn.Module):
         """Return softmax attention weights ``(B, H, L, L)`` under ``allow``."""
         q, k, _v = self._project_qkv(x)
         scale = self.head_dim**-0.5
-        scores = torch.matmul(q, k.transpose(-2, -1)) * scale
-        additive = torch.zeros(
-            scores.shape[0],
-            1,
-            scores.shape[-1],
-            scores.shape[-1],
-            device=scores.device,
-            dtype=scores.dtype,
-        )
-        additive = additive.masked_fill(~allow.unsqueeze(1), float("-inf"))
-        scores = scores + additive
+        scores = torch.matmul(q.float(), k.float().transpose(-2, -1)) * scale
+        attn_mask = allow.unsqueeze(1) if allow.ndim == 3 else allow
+        scores = scores.masked_fill(~attn_mask, float("-inf"))
         return torch.softmax(scores, dim=-1)
 
     def forward(self, x: torch.Tensor, allow: torch.Tensor) -> torch.Tensor:
         batch, length, width = x.shape
         q, k, v = self._project_qkv(x)
-        attn_mask = allow.unsqueeze(1)
-        additive = torch.zeros(
-            batch, 1, length, length, device=x.device, dtype=x.dtype
-        )
-        additive = additive.masked_fill(~attn_mask, float("-inf"))
+        attn_mask = allow.unsqueeze(1) if allow.ndim == 3 else allow
         y = F.scaled_dot_product_attention(
             q,
             k,
             v,
-            attn_mask=additive,
+            attn_mask=attn_mask,
             dropout_p=self.dropout.p if self.training else 0.0,
         )
         y = y.transpose(1, 2).contiguous().view(batch, length, width)
@@ -220,9 +208,11 @@ class DecoderOnlyLM(nn.Module):
             )
         x = self._embed(input_ids)
         allow = self.derive_allow_mask(segment_ids)
-        self.last_allow_mask = allow
+        if not torch.compiler.is_compiling():
+            self.last_allow_mask = allow
+        attn_mask = allow.unsqueeze(1)
         for block in self.blocks:
-            x = block(x, allow)
+            x = block(x, attn_mask)
         return self.ln_f(x)
 
     @torch.no_grad()
@@ -243,12 +233,14 @@ class DecoderOnlyLM(nn.Module):
             raise ValueError("input_ids / segment_ids shape mismatch")
         x = self._embed(input_ids)
         allow = self.derive_allow_mask(segment_ids)
-        self.last_allow_mask = allow
+        if not torch.compiler.is_compiling():
+            self.last_allow_mask = allow
+        attn_mask = allow.unsqueeze(1)
         for i, block in enumerate(self.blocks):
             if i == layer_index:
                 h = block.ln1(x)
                 return block.attn.attention_probs(h, allow)
-            x = block(x, allow)
+            x = block(x, attn_mask)
         raise RuntimeError("unreachable")
 
     def param_count(self) -> int:

@@ -122,7 +122,11 @@ def _score_run(
     document = {
         "git_commit": commit if commit is not None else git_commit(),
         "git_dirty": dirty if dirty is not None else git_dirty(),
-        **(hardware if hardware is not None else hardware_metadata(device)),
+        **(
+            hardware
+            if hardware is not None
+            else hardware_metadata(device, precision="fp32")
+        ),
         "protocol": protocol_record(),
         "scoring_checkpoint": "final",
         "codec": codec,
@@ -178,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     device = resolve_device(args.device, require_gpu=args.require_gpu)
     commit = git_commit()
     dirty = git_dirty()
-    hardware = hardware_metadata(device)
+    hardware = hardware_metadata(device, precision="fp32")
     run_dirs = _iter_run_dirs(args.runs_root)
     if not run_dirs:
         raise SystemExit(f"no final checkpoints under {args.runs_root}")
