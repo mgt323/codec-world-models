@@ -476,8 +476,16 @@ def test_micro_matrix_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert manifest is not None
     assert manifest["interpretation"] == "plumbing_only"
     assert manifest["harness_step_cap"] == 1
+    assert "git_dirty" in manifest
+    assert manifest["precision"] == "fp32"
+    assert "device_type" in manifest
+    assert "torch_version" in manifest
     assert len(manifest["cells"]) == 4
     assert all(c["status"] == STATUS_COMPLETED for c in manifest["cells"])
+    assert all(
+        isinstance(c["wall_clock_seconds"], float) and c["wall_clock_seconds"] > 0.0
+        for c in manifest["cells"]
+    )
 
 
 @pytest.mark.integration

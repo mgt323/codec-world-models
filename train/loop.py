@@ -33,18 +33,19 @@ from train.config import (
     LEARNING_RATE,
     WEIGHT_DECAY,
     RunConfig,
+    get_budget_profile,
     validate_run_config,
 )
+from train.device import hardware_metadata, resolve_device
 from train.data import (
     episodes_from_parquet,
     file_sha256,
     load_codec_vocab,
     pool_fingerprint,
     present_episode_order,
-    select_episodes,
     synthetic_episodes,
 )
-from train.packer import iter_packed_batches, pack_episodes
+from train.packer import count_stream_tokens, iter_packed_batches_streaming
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +69,7 @@ class TrainResult:
     tokens_consumed: int
     episodes_presented: int
     packing: PackingAccount
+    wall_clock_seconds: float | None = None
 
 
 def project_optimizer_steps(
@@ -118,6 +120,23 @@ def git_commit() -> str:
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
         return "unknown"
+
+
+def git_dirty() -> bool:
+    """True when the worktree has uncommitted changes (invariant I13).
+
+    A missing git binary is recorded as dirty so a result is not labeled clean
+    when provenance could not be checked.
+    """
+    try:
+        output = subprocess.check_output(
+            ["git", "status", "--porcelain"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return True
+    return bool(output.strip())
 
 
 def _next_token_loss(
@@ -211,6 +230,7 @@ def run_training(
     save_intermediate_every: int | None = None,
     runs_subdir: str | None = None,
     restrict_loss_to_segment: bool = False,
+    allow_synthetic: bool = False,
 ) -> TrainResult:
     """Train one run.
 
@@ -224,6 +244,10 @@ def run_training(
     cross-segment-target residual; it defaults to the locked behaviour and is
     not a ``RunConfig`` field. Adopting it would be a methodological change and
     must be applied to every codec at once.
+
+    ``allow_synthetic`` is test-only. A missing parquet raises
+    ``FileNotFoundError`` unless it is set. Direct parquet loads are truncated
+    to the profile's ``pool_episodes``.
     """
     validate_run_config(config)
     if not config.document_masking:
@@ -236,7 +260,13 @@ def run_training(
     if bs < 1:
         raise ValueError("batch_size must be positive")
 
-    device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    if device is None:
+        device = resolve_device("auto")
+    elif isinstance(device, str):
+        if device in ("auto", "rocm", "cuda", "cpu"):
+            device = resolve_device(device)  # type: ignore[arg-type]
+        else:
+            device = torch.device(device)
     out = run_dir_for(config, output_root, runs_subdir=runs_subdir)
     ckpt_dir = out / "checkpoints"
     out.mkdir(parents=True, exist_ok=True)
@@ -255,10 +285,19 @@ def run_training(
     dataset_path = Path(config.dataset_split_train.format(codec=config.codec))
     pool_source = "injected"
     if episode_pool is None:
-        if dataset_path.exists():
-            episode_pool = episodes_from_parquet(dataset_path, vocab)
+        profile = get_budget_profile(config.budget_profile)
+        if dataset_path.is_file():
+            episode_pool = episodes_from_parquet(
+                dataset_path, vocab, max_episodes=profile.pool_episodes
+            )
+            if len(episode_pool) != profile.pool_episodes:
+                raise ValueError(
+                    f"loaded pool has {len(episode_pool)} episodes, profile "
+                    f"{profile.name} requires exactly {profile.pool_episodes} "
+                    f"(source {dataset_path})"
+                )
             pool_source = "parquet"
-        else:
+        elif allow_synthetic:
             episode_pool = synthetic_episodes(
                 n_episodes=min(32, n_target),
                 tokens_per_episode=64,
@@ -266,12 +305,20 @@ def run_training(
                 seed=config.data_shuffle_seed,
             )
             pool_source = "synthetic"
+        else:
+            raise FileNotFoundError(
+                f"encoded train split not found: {dataset_path}. "
+                "Pass allow_synthetic=True only from unit tests."
+            )
 
     pool_list = [list(ep) for ep in episode_pool]
     order = present_episode_order(
         len(pool_list), n_target, config.data_shuffle_seed
     )
-    presented = select_episodes(pool_list, order)
+
+    def _presented() -> Any:
+        for index in order:
+            yield pool_list[index]
 
     model = build_model(
         TransformerConfig(
@@ -285,6 +332,7 @@ def run_training(
         codec_name=config.codec,
     )
     model.to(device)
+    model.float()
     model.train()
 
     optimizer = torch.optim.AdamW(
@@ -295,59 +343,49 @@ def run_training(
     )
 
     metrics_path = out / "metrics_train.jsonl"
-    if metrics_path.exists():
-        metrics_path.unlink()
-
     t0 = time.perf_counter()
     optimizer_steps = 0
     tokens_consumed = 0
-    # Pack all presentations then train — for full budgets this is large;
-    # smoke tests use tiny episode_limit. Streaming packer can replace later.
-    windows = pack_episodes(
-        presented, context_length=config.context_length_L
-    )
-    stream_tokens = sum(w.n_content_tokens for w in windows)
-    n_windows = len(windows)
-    projected_windows, projected_steps = project_optimizer_steps(
+    pin_memory = device.type == "cuda"
+    stream_tokens = count_stream_tokens(_presented())
+    n_windows, projected_steps = project_optimizer_steps(
         stream_tokens,
         context_length=config.context_length_L,
         batch_size=bs,
     )
-    if projected_windows != n_windows:
-        raise RuntimeError(
-            f"packer window count {n_windows} != ceil(stream/L) "
-            f"projection {projected_windows} (stream_tokens={stream_tokens})"
-        )
     # Partial final batches are yielded (no drop_last) — matches ceil(windows/bs).
     batch_sizes: list[int] = []
 
-    for input_ids, segment_ids in iter_packed_batches(
-        windows, batch_size=bs
-    ):
-        batch_sizes.append(int(input_ids.shape[0]))
-        input_ids = input_ids.to(device)
-        segment_ids = segment_ids.to(device)
-        logits = model(input_ids, segment_ids)
-        loss, n_tok, loss_diag = _next_token_loss(
-            logits,
-            input_ids,
-            segment_ids,
-            restrict_to_segment=restrict_loss_to_segment,
-        )
-        if n_tok == 0:
-            # Still count as an optimizer step opportunity skipped — should not
-            # happen for real packed content; raise so accounting cannot drift.
-            raise RuntimeError(
-                "batch produced zero loss tokens; step accounting would diverge"
+    with metrics_path.open("w", encoding="utf-8") as metrics_file:
+        for input_ids, segment_ids in iter_packed_batches_streaming(
+            _presented(),
+            batch_size=bs,
+            context_length=config.context_length_L,
+            pin_memory=pin_memory,
+        ):
+            batch_sizes.append(int(input_ids.shape[0]))
+            input_ids = input_ids.to(device, non_blocking=pin_memory)
+            segment_ids = segment_ids.to(device, non_blocking=pin_memory)
+            logits = model(input_ids, segment_ids)
+            loss, n_tok, loss_diag = _next_token_loss(
+                logits,
+                input_ids,
+                segment_ids,
+                restrict_to_segment=restrict_loss_to_segment,
             )
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
-        optimizer_steps += 1
-        tokens_consumed += n_tok
+            if n_tok == 0:
+                # Still count as an optimizer step opportunity skipped — should not
+                # happen for real packed content; raise so accounting cannot drift.
+                raise RuntimeError(
+                    "batch produced zero loss tokens; step accounting would diverge"
+                )
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+            optimizer_steps += 1
+            tokens_consumed += n_tok
 
-        with metrics_path.open("a", encoding="utf-8") as fh:
-            fh.write(
+            metrics_file.write(
                 json.dumps(
                     {
                         "step": optimizer_steps,
@@ -360,21 +398,23 @@ def run_training(
                 )
                 + "\n"
             )
+            if optimizer_steps % 10 == 0:
+                metrics_file.flush()
 
-        if (
-            save_intermediate_every is not None
-            and optimizer_steps % save_intermediate_every == 0
-        ):
-            _save_checkpoint(
-                ckpt_dir / f"step_{optimizer_steps}_non_scoring.pt",
-                model,
-                scoring=False,
-                step=optimizer_steps,
-                config=config,
-            )
+            if (
+                save_intermediate_every is not None
+                and optimizer_steps % save_intermediate_every == 0
+            ):
+                _save_checkpoint(
+                    ckpt_dir / f"step_{optimizer_steps}_non_scoring.pt",
+                    model,
+                    scoring=False,
+                    step=optimizer_steps,
+                    config=config,
+                )
 
-        if max_optimizer_steps is not None and optimizer_steps >= max_optimizer_steps:
-            break
+            if max_optimizer_steps is not None and optimizer_steps >= max_optimizer_steps:
+                break
 
     if max_optimizer_steps is None and optimizer_steps != projected_steps:
         raise RuntimeError(
@@ -408,8 +448,11 @@ def run_training(
     )
     flops["approx_6nd"] = 6 * param_count * tokens_consumed
 
+    wall_clock_seconds = time.perf_counter() - t0
     reproducibility: dict[str, Any] = {
         "git_commit": git_commit(),
+        "git_dirty": git_dirty(),
+        **hardware_metadata(device),
         "config": config.to_dict(),
         "config_sha256": config_sha256(config),
         "budget_profile": config.budget_profile,
@@ -441,7 +484,7 @@ def run_training(
             "formula": "windows=ceil(stream/L); steps=ceil(windows/batch_size); no drop_last",
         },
         "flops_estimate": flops,
-        "wall_clock_seconds": time.perf_counter() - t0,
+        "wall_clock_seconds": wall_clock_seconds,
         "scoring_checkpoint": "final",
         "harness_step_cap": max_optimizer_steps,
         "loss_target_policy": (
@@ -461,4 +504,5 @@ def run_training(
         tokens_consumed=tokens_consumed,
         episodes_presented=n_target,
         packing=packing,
+        wall_clock_seconds=wall_clock_seconds,
     )

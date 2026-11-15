@@ -6,7 +6,12 @@ import torch
 
 from model.architecture import PAD_SEGMENT_ID, attention_allow_mask
 from obs_codecs.vocab import BOS_ID, EOS_ID, PAD_ID
-from train.packer import pack_episodes, pack_stream_to_windows
+from train.packer import (
+    count_stream_tokens,
+    iter_packed_windows,
+    pack_episodes,
+    pack_stream_to_windows,
+)
 
 
 def test_packer_segment_ids_increment_at_episode_boundaries() -> None:
@@ -75,3 +80,20 @@ def test_long_episode_split_preserves_segment_within_window() -> None:
     content = last.segment_ids[last.segment_ids != PAD_SEGMENT_ID]
     assert set(content.tolist()) == {0}
     assert PAD_SEGMENT_ID in last.segment_ids.tolist()
+
+
+def test_streaming_windows_match_pack_episodes() -> None:
+    episodes = [
+        [10, 11, 12, 13],
+        list(range(20, 40)),
+        [7],
+        list(range(50, 70)),
+    ]
+    packed = pack_episodes(episodes, context_length=8)
+    streamed = list(iter_packed_windows(episodes, context_length=8))
+    assert len(streamed) == len(packed)
+    assert count_stream_tokens(episodes) == sum(window.n_content_tokens for window in packed)
+    for left, right in zip(packed, streamed, strict=True):
+        assert torch.equal(left.input_ids, right.input_ids)
+        assert torch.equal(left.segment_ids, right.segment_ids)
+        assert left.n_content_tokens == right.n_content_tokens

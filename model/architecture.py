@@ -200,13 +200,30 @@ class DecoderOnlyLM(nn.Module):
                 f"input_ids shape {tuple(input_ids.shape)} != "
                 f"segment_ids shape {tuple(segment_ids.shape)}"
             )
+        x = self.hidden_states(input_ids, segment_ids)
+        return self.lm_head(x)
+
+    def hidden_states(
+        self,
+        input_ids: torch.Tensor,
+        segment_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Final-layer hidden states ``(B, L, d_model)`` before the LM head.
+
+        Same mask path as ``forward``. Used by frozen eval probes; stage-1
+        training still optimizes only next-token NLL.
+        """
+        if input_ids.shape != segment_ids.shape:
+            raise ValueError(
+                f"input_ids shape {tuple(input_ids.shape)} != "
+                f"segment_ids shape {tuple(segment_ids.shape)}"
+            )
         x = self._embed(input_ids)
         allow = self.derive_allow_mask(segment_ids)
         self.last_allow_mask = allow
         for block in self.blocks:
             x = block(x, allow)
-        x = self.ln_f(x)
-        return self.lm_head(x)
+        return self.ln_f(x)
 
     @torch.no_grad()
     def attention_probs_at_layer(
