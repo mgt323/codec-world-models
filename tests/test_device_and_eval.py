@@ -23,7 +23,7 @@ from train.device import resolve_device
 from train.loop import run_training
 from train.matrix import aggregate_scientific_metrics, expand_matrix
 from obs_codecs.vocab import VocabArtifact
-from world.schema import observe
+from world.schema import Observation, observe
 from world.simulate import simulate
 
 
