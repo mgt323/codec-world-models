@@ -33,8 +33,17 @@ def load_scoring_checkpoint(
         raise ValueError(
             f"{ckpt} is not a scoring checkpoint (scoring={payload.get('scoring')!r})"
         )
+    state_dict = payload["model_state_dict"]
+    if not isinstance(state_dict, dict):
+        raise ValueError(f"{ckpt} model_state_dict must be a mapping")
+    compiled_keys = [k for k in state_dict if str(k).startswith("_orig_mod.")]
+    if compiled_keys:
+        raise ValueError(
+            f"{ckpt} contains compiled wrapper keys (e.g. {compiled_keys[0]!r}); "
+            "checkpoints must be saved unwrapped via unwrap_model(model).state_dict()"
+        )
     model = build_model()
-    model.load_state_dict(payload["model_state_dict"])
+    model.load_state_dict(state_dict)
     model.to(device)
     model.float()
     model.eval()

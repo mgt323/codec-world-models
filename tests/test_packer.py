@@ -6,11 +6,15 @@ import torch
 
 from model.architecture import PAD_SEGMENT_ID, attention_allow_mask
 from obs_codecs.vocab import BOS_ID, EOS_ID, PAD_ID
+from train.data import iter_present_episode_order, present_episode_order
 from train.packer import (
     count_stream_tokens,
+    iter_packed_batches,
+    iter_packed_batches_streaming,
     iter_packed_windows,
     pack_episodes,
     pack_stream_to_windows,
+    prefetch_batches,
 )
 
 
@@ -97,3 +101,52 @@ def test_streaming_windows_match_pack_episodes() -> None:
         assert torch.equal(left.input_ids, right.input_ids)
         assert torch.equal(left.segment_ids, right.segment_ids)
         assert left.n_content_tokens == right.n_content_tokens
+
+
+def test_iter_present_episode_order_matches_present_episode_order() -> None:
+    for n_pool, n_pres, seed in ((7, 20, 42), (10, 10, 0), (5, 3, 99)):
+        assert list(iter_present_episode_order(n_pool, n_pres, seed)) == present_episode_order(
+            n_pool, n_pres, seed
+        )
+
+
+def test_streaming_batches_match_eager_batches_across_partial_tail() -> None:
+    pool = [
+        [10 + i, 11 + i, 12 + i, 13 + i] for i in range(9)
+    ]
+    order = present_episode_order(len(pool), 17, shuffle_seed=2_000_001)
+    presented = [pool[i] for i in order]
+
+    eager_windows = pack_episodes(presented, context_length=16)
+    # Choose batch_size=4 so n_windows % 4 != 0 (exercises partial final batch).
+    eager_batches = list(iter_packed_batches(eager_windows, batch_size=4))
+    assert eager_batches[-1][0].shape[0] < 4
+
+    stream_batches = list(
+        iter_packed_batches_streaming(
+            (pool[i] for i in iter_present_episode_order(len(pool), 17, 2_000_001)),
+            batch_size=4,
+            context_length=16,
+            pin_memory=False,
+        )
+    )
+    prefetched_batches = list(
+        prefetch_batches(
+            iter_packed_batches_streaming(
+                (pool[i] for i in iter_present_episode_order(len(pool), 17, 2_000_001)),
+                batch_size=4,
+                context_length=16,
+                pin_memory=torch.cuda.is_available(),
+            ),
+            max_prefetch=2,
+        )
+    )
+    assert len(stream_batches) == len(eager_batches)
+    assert len(prefetched_batches) == len(eager_batches)
+    for (ei, es), (si, ss), (pi, ps) in zip(
+        eager_batches, stream_batches, prefetched_batches, strict=True
+    ):
+        assert torch.equal(ei, si)
+        assert torch.equal(es, ss)
+        assert torch.equal(ei, pi)
+        assert torch.equal(es, ps)

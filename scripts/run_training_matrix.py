@@ -29,7 +29,11 @@ from train.config import (  # noqa: E402
     validate_run_config,
 )
 from train.data import episodes_from_parquet, load_codec_vocab  # noqa: E402
-from train.device import hardware_metadata, resolve_device  # noqa: E402
+from train.device import (  # noqa: E402
+    hardware_metadata,
+    resolve_device,
+    resolve_precision,
+)
 from train.loop import (  # noqa: E402
     git_commit,
     git_dirty,
@@ -57,9 +61,9 @@ from train.matrix import (  # noqa: E402
 )
 
 TIER_PROFILES = {0: "tier0", 1: "tier1"}
-# Measured FP32 AdamW step on the RX 9070 XT (gfx1201), torch 2.14.1+rocm7.2,
-# batch 8, L=1024, the locked additive segment mask. Engineering estimate only.
-SECONDS_PER_STEP_ESTIMATE = 0.27
+# Measured compiled bf16_mixed AdamW step on RX 9070 XT (gfx1201),
+# torch 2.14.1+rocm7.2, batch 8, L=1024, boolean SDPA mask. Engineering estimate.
+SECONDS_PER_STEP_ESTIMATE = 0.025
 
 
 def _tier_segment(profile: BudgetProfile) -> str:
@@ -82,6 +86,7 @@ def _preflight(
     profile: BudgetProfile,
     *,
     vocab_dir: Path,
+    encoded_dir: Path | None = None,
     batch_size: int,
 ) -> dict[str, list[list[int]]]:
     """Contract §4.4.1-§4.4.3 gates plus the pool-size guard.
@@ -94,9 +99,10 @@ def _preflight(
         validate_run_config(cell.config)
     assert_seed_pairing(cells)
 
+    enc_root = _ROOT / "artifacts" / "encoded" if encoded_dir is None else Path(encoded_dir)
     pools: dict[str, list[list[int]]] = {}
     for codec in iter_pool_requirements(cells):
-        parquet = _ROOT / f"artifacts/encoded/train_{codec}.parquet"
+        parquet = enc_root / f"train_{codec}.parquet"
         if not parquet.is_file():
             raise SystemExit(f"missing encoded train split: {parquet}")
         vocab = load_codec_vocab(codec, vocab_dir)
@@ -160,12 +166,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--replications", type=int, default=5)
     parser.add_argument("--output-root", type=Path, default=_ROOT / "artifacts")
     parser.add_argument("--vocab-dir", type=Path, default=_ROOT / "artifacts" / "vocabs")
+    parser.add_argument(
+        "--encoded-dir",
+        type=Path,
+        default=_ROOT / "artifacts" / "encoded",
+        help="Directory containing train_{codec}.parquet splits.",
+    )
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     parser.add_argument(
         "--device",
         choices=("auto", "rocm", "cuda", "cpu"),
         default="auto",
         help="auto prefers ROCm/HIP (torch.cuda). rocm and cuda are the same device.",
+    )
+    parser.add_argument(
+        "--precision",
+        choices=("auto", "bf16_mixed", "fp32"),
+        default="auto",
+        help="auto uses bf16_mixed on ROCm GPU and fp32 on CPU.",
+    )
+    parser.add_argument(
+        "--no-compile",
+        action="store_true",
+        help="Disable torch.compile during training (diagnostic escape hatch).",
     )
     parser.add_argument(
         "--require-gpu",
@@ -206,9 +229,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         device = resolve_device(args.device, require_gpu=args.require_gpu)
+        resolved_precision = resolve_precision(device, args.precision)
     except RuntimeError as exc:
         raise SystemExit(str(exc)) from exc
     print(f"device           {device} ({args.device})")
+    print(f"precision        {resolved_precision} ({args.precision})")
 
     cells = expand_matrix(
         profile=profile,
@@ -222,10 +247,27 @@ def main(argv: list[str] | None = None) -> int:
 
     _print_budget_table(cells)
     pools = _preflight(
-        cells, profile, vocab_dir=args.vocab_dir, batch_size=args.batch_size
+        cells,
+        profile,
+        vocab_dir=args.vocab_dir,
+        encoded_dir=args.encoded_dir,
+        batch_size=args.batch_size,
     )
 
-    hw_meta = hardware_metadata(device)
+    use_compile = (
+        False
+        if args.no_compile
+        else (
+            device.type == "cuda"
+            and (args.smoke_max_steps is None or args.smoke_max_steps >= 16)
+        )
+    )
+    hw_meta = hardware_metadata(
+        device,
+        precision=resolved_precision,
+        torch_compile=use_compile,
+        fused_adamw=(device.type == "cuda"),
+    )
     manifest_path = Path(args.output_root) / "runs" / segment / MANIFEST_NAME
     manifest = load_manifest(manifest_path)
     expected_keys = {c.key for c in cells}
@@ -242,6 +284,17 @@ def main(argv: list[str] | None = None) -> int:
             hardware=hw_meta,
         )
     else:
+        prior_precision = manifest.get("precision")
+        if (
+            prior_precision is not None
+            and prior_precision != resolved_precision
+            and not args.force
+        ):
+            raise SystemExit(
+                f"refusing to mix precision {resolved_precision!r} with existing "
+                f"manifest precision {prior_precision!r} at {manifest_path}; "
+                "pass --force or use a separate --output-root"
+            )
         manifest.update(hw_meta)
     index = manifest_cell_index(manifest)
 
@@ -274,6 +327,10 @@ def main(argv: list[str] | None = None) -> int:
                 batch_size=args.batch_size,
                 max_optimizer_steps=args.smoke_max_steps,
                 runs_subdir=segment,
+                vocab_dir=args.vocab_dir,
+                encoded_dir=args.encoded_dir,
+                precision=resolved_precision,
+                compile_model=(False if args.no_compile else None),
             )
         except KeyboardInterrupt:
             update_cell(

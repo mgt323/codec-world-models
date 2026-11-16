@@ -175,7 +175,7 @@ Accept “B is better” only if direction agrees in **both** regimes, or qualif
    - **Within one replication**, the reshuffle seed is **identical across codecs** (and E-variants); only episode-presentation count / \(T_{\mathrm{eff}}\) differs.  
    - Scaling \(T_{\mathrm{target}}\) for longer pilots (if any) is a constant factor shared across codecs and replications; re-apply floor afterward.
 
-8. **Numeric \(L\) (locked):** \(L = 1024\) for all codecs. Packer implements document masking (§4.4), `<bos>`/`<eos>` at episode boundaries, and explicit `segment_ids` as mask source. See `model/README.md` Decision 1.
+8. **Numeric \(L\) (locked):** \(L = 1024\) for all codecs. Packer implements document masking (§4.4), `<bos>`/`<eos>` at episode boundaries, and explicit `segment_ids` as mask source. See `model/README.md` Decision 1. Under `INVARIANTS.md` §I15, uniform `bf16_mixed` autocast + shared boolean `SDPA` + static `(8, 1024)` `torch.compile` preserves exact per-step compute symmetry across codecs (`I6`), with partial final batches (`B < 8`) executed eagerly without `drop_last`.
 
 9. **Pilot budget profiles (locked):** Item 7's sanctioned "constant factor shared across codecs and replications, re-apply floor afterward" is instantiated as three named profiles. Each is described by a single number, `pool_episodes`, which is both the info-matched episode count and the anchor for \(T_{\mathrm{target}} = \mathrm{pool\_episodes} \times n_{\mathrm{steps}} \times \mathrm{avg}_A\); every codec's budget is then re-derived from the §0 formula with floor re-applied. `train/config.py` computes all three from that one formula (no per-tier literals), and a drift test asserts `full_v0` still equals the §1/§2 tables.
 

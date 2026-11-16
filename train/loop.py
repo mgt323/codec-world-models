@@ -7,14 +7,16 @@ Scoring checkpoint: final only; intermediate files tagged ``non_scoring``.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import subprocess
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 import torch
 import torch.nn.functional as F
@@ -36,16 +38,23 @@ from train.config import (
     get_budget_profile,
     validate_run_config,
 )
-from train.device import hardware_metadata, resolve_device
+from train.device import (
+    PrecisionMode,
+    hardware_metadata,
+    resolve_device,
+    resolve_precision,
+)
 from train.data import (
     episodes_from_parquet,
     file_sha256,
+    iter_present_episode_order,
     load_codec_vocab,
     pool_fingerprint,
-    present_episode_order,
     synthetic_episodes,
 )
-from train.packer import count_stream_tokens, iter_packed_batches_streaming
+from train.packer import iter_packed_batches_streaming, prefetch_batches
+
+LOG_FLUSH_INTERVAL = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,7 +184,7 @@ def _next_token_loss(
         return logits.sum() * 0.0, 0, {"n_within": n_within, "n_cross": n_cross}
 
     loss = F.cross_entropy(
-        shift_logits.reshape(-1, shift_logits.size(-1)),
+        shift_logits.float().reshape(-1, shift_logits.size(-1)),
         shift_labels.reshape(-1),
         reduction="none",
     ).view_as(shift_labels)
@@ -198,6 +207,51 @@ def _next_token_loss(
     return loss.masked_select(selected).mean(), n_selected, diagnostics
 
 
+def _next_token_loss_step(
+    logits: torch.Tensor,
+    input_ids: torch.Tensor,
+    segment_ids: torch.Tensor,
+    *,
+    restrict_to_segment: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Static-shape FP32 loss and detached diagnostic vector ``(4,)`` on device."""
+    shift_logits = logits[:, :-1, :].float()
+    shift_labels = input_ids[:, 1:]
+    shift_seg = segment_ids[:, 1:]
+    src_seg = segment_ids[:, :-1]
+
+    valid = shift_seg != PAD_SEGMENT_ID
+    within = valid & (shift_seg == src_seg)
+    cross = valid & (shift_seg != src_seg)
+    selected = within if restrict_to_segment else valid
+
+    token_loss = F.cross_entropy(
+        shift_logits.reshape(-1, shift_logits.size(-1)),
+        shift_labels.reshape(-1),
+        reduction="none",
+    ).view_as(shift_labels)
+
+    valid_f = valid.float()
+    within_f = within.float()
+    cross_f = cross.float()
+    selected_f = selected.float()
+
+    selected_loss = (token_loss * selected_f).sum() / selected_f.sum().clamp_min(1.0)
+    valid_mean = (token_loss.detach() * valid_f).sum() / valid_f.sum().clamp_min(1.0)
+    within_mean = (token_loss.detach() * within_f).sum() / within_f.sum().clamp_min(1.0)
+    cross_mean = (token_loss.detach() * cross_f).sum() / cross_f.sum().clamp_min(1.0)
+    diag_gpu = torch.stack([selected_loss.detach(), valid_mean, within_mean, cross_mean])
+    return selected_loss, diag_gpu
+
+
+def unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
+    """Unwrap ``torch.compile`` (``_orig_mod``) wrappers to the base module."""
+    raw: torch.nn.Module = model
+    while hasattr(raw, "_orig_mod"):
+        raw = getattr(raw, "_orig_mod")
+    return raw
+
+
 def _save_checkpoint(
     path: Path,
     model: torch.nn.Module,
@@ -208,7 +262,7 @@ def _save_checkpoint(
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "model_state_dict": model.state_dict(),
+        "model_state_dict": unwrap_model(model).state_dict(),
         "scoring": scoring,
         "step": step,
         "codec": config.codec,
@@ -231,6 +285,10 @@ def run_training(
     runs_subdir: str | None = None,
     restrict_loss_to_segment: bool = False,
     allow_synthetic: bool = False,
+    vocab_dir: Path | str = "artifacts/vocabs",
+    encoded_dir: Path | str | None = None,
+    precision: PrecisionMode | Literal["auto"] = "auto",
+    compile_model: bool | None = None,
 ) -> TrainResult:
     """Train one run.
 
@@ -267,6 +325,18 @@ def run_training(
             device = resolve_device(device)  # type: ignore[arg-type]
         else:
             device = torch.device(device)
+    resolved_precision = resolve_precision(device, precision)
+    dataset_path = (
+        Path(encoded_dir) / f"train_{config.codec}.parquet"
+        if encoded_dir is not None
+        else Path(config.dataset_split_train.format(codec=config.codec))
+    )
+    if episode_pool is None and not dataset_path.is_file() and not allow_synthetic:
+        raise FileNotFoundError(
+            f"encoded train split not found: {dataset_path}. "
+            "Pass allow_synthetic=True only from unit tests."
+        )
+
     out = run_dir_for(config, output_root, runs_subdir=runs_subdir)
     ckpt_dir = out / "checkpoints"
     out.mkdir(parents=True, exist_ok=True)
@@ -274,7 +344,7 @@ def run_training(
 
     config.to_json(out / "config.json")
 
-    vocab = load_codec_vocab(config.codec)
+    vocab = load_codec_vocab(config.codec, vocab_dir)
     native_size = vocab.vocab_size
     if native_size > SHARED_VOCAB_SIZE:
         raise ValueError(
@@ -282,7 +352,6 @@ def run_training(
             f"{SHARED_VOCAB_SIZE}"
         )
 
-    dataset_path = Path(config.dataset_split_train.format(codec=config.codec))
     pool_source = "injected"
     if episode_pool is None:
         profile = get_budget_profile(config.budget_profile)
@@ -305,41 +374,53 @@ def run_training(
                 seed=config.data_shuffle_seed,
             )
             pool_source = "synthetic"
-        else:
-            raise FileNotFoundError(
-                f"encoded train split not found: {dataset_path}. "
-                "Pass allow_synthetic=True only from unit tests."
-            )
 
     pool_list = [list(ep) for ep in episode_pool]
-    order = present_episode_order(
-        len(pool_list), n_target, config.data_shuffle_seed
+    ep_framed_lens = [len(ep) + 2 for ep in pool_list]
+    stream_tokens = sum(
+        ep_framed_lens[index]
+        for index in iter_present_episode_order(
+            len(pool_list), n_target, config.data_shuffle_seed
+        )
     )
 
-    def _presented() -> Any:
-        for index in order:
+    def _presented() -> Iterator[list[int]]:
+        for index in iter_present_episode_order(
+            len(pool_list), n_target, config.data_shuffle_seed
+        ):
             yield pool_list[index]
 
-    model = build_model(
+    raw_model = build_model(
         TransformerConfig(
             vocab_size=SHARED_VOCAB_SIZE,
             context_length=config.context_length_L,
         )
     )
     initialize_model(
-        model,
+        raw_model,
         model_init_seed=config.model_init_seed,
         codec_name=config.codec,
     )
-    model.to(device)
-    model.float()
-    model.train()
+    raw_model.to(device)
+    raw_model.float()
+    raw_model.train()
 
+    use_compile = (
+        device.type == "cuda"
+        and (max_optimizer_steps is None or max_optimizer_steps >= 16)
+        if compile_model is None
+        else bool(compile_model)
+    )
+    compiled_model = (
+        torch.compile(raw_model, dynamic=False) if use_compile else None
+    )
+    fused_adamw = device.type == "cuda"
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        raw_model.parameters(),
         lr=LEARNING_RATE,
         weight_decay=WEIGHT_DECAY,
         betas=ADAM_BETAS,
+        fused=fused_adamw,
     )
 
     metrics_path = out / "metrics_train.jsonl"
@@ -347,59 +428,117 @@ def run_training(
     optimizer_steps = 0
     tokens_consumed = 0
     pin_memory = device.type == "cuda"
-    stream_tokens = count_stream_tokens(_presented())
     n_windows, projected_steps = project_optimizer_steps(
         stream_tokens,
         context_length=config.context_length_L,
         batch_size=bs,
     )
     # Partial final batches are yielded (no drop_last) — matches ceil(windows/bs).
-    batch_sizes: list[int] = []
+    first_batch_size = 0
+    last_batch_size = 0
+    pending_steps: list[tuple[int, int, int, int, int, int, torch.Tensor]] = []
+
+    def _flush_pending_metrics(metrics_file: Any) -> None:
+        if not pending_steps:
+            return
+        diag_rows = torch.stack([item[6] for item in pending_steps]).cpu().tolist()
+        for (step_idx, step_tok, step_consumed, step_bs, n_w, n_c, _), diag in zip(
+            pending_steps, diag_rows, strict=True
+        ):
+            loss_val, valid_val, within_val, cross_val = diag
+            metrics_file.write(
+                json.dumps(
+                    {
+                        "step": step_idx,
+                        "loss": float(loss_val),
+                        "tokens_in_step": step_tok,
+                        "tokens_consumed": step_consumed,
+                        "batch_size": step_bs,
+                        "n_within": n_w,
+                        "n_cross": n_c,
+                        "loss_all_targets": float(valid_val),
+                        "loss_within_segment": float(within_val) if n_w else 0.0,
+                        "loss_cross_segment": float(cross_val) if n_c else 0.0,
+                    }
+                )
+                + "\n"
+            )
+        metrics_file.flush()
+        pending_steps.clear()
+
+    batches = iter_packed_batches_streaming(
+        _presented(),
+        batch_size=bs,
+        context_length=config.context_length_L,
+        pin_memory=pin_memory,
+    )
+    if pin_memory:
+        batches = prefetch_batches(batches, max_prefetch=2)
+
+    autocast_ctx = (
+        torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+        if resolved_precision == "bf16_mixed"
+        else contextlib.nullcontext()
+    )
 
     with metrics_path.open("w", encoding="utf-8") as metrics_file:
-        for input_ids, segment_ids in iter_packed_batches_streaming(
-            _presented(),
-            batch_size=bs,
-            context_length=config.context_length_L,
-            pin_memory=pin_memory,
-        ):
-            batch_sizes.append(int(input_ids.shape[0]))
-            input_ids = input_ids.to(device, non_blocking=pin_memory)
-            segment_ids = segment_ids.to(device, non_blocking=pin_memory)
-            logits = model(input_ids, segment_ids)
-            loss, n_tok, loss_diag = _next_token_loss(
-                logits,
-                input_ids,
-                segment_ids,
-                restrict_to_segment=restrict_loss_to_segment,
-            )
+        for input_ids_cpu, segment_ids_cpu in batches:
+            batch_len = int(input_ids_cpu.shape[0])
+            if optimizer_steps == 0:
+                first_batch_size = batch_len
+            last_batch_size = batch_len
+
+            shift_seg_cpu = segment_ids_cpu[:, 1:]
+            src_seg_cpu = segment_ids_cpu[:, :-1]
+            valid_cpu = shift_seg_cpu != PAD_SEGMENT_ID
+            within_cpu = valid_cpu & (shift_seg_cpu == src_seg_cpu)
+            cross_cpu = valid_cpu & (shift_seg_cpu != src_seg_cpu)
+            selected_cpu = within_cpu if restrict_loss_to_segment else valid_cpu
+            n_tok = int(selected_cpu.sum().item())
+            n_within = int(within_cpu.sum().item())
+            n_cross = int(cross_cpu.sum().item())
             if n_tok == 0:
                 # Still count as an optimizer step opportunity skipped — should not
                 # happen for real packed content; raise so accounting cannot drift.
                 raise RuntimeError(
                     "batch produced zero loss tokens; step accounting would diverge"
                 )
+
+            input_ids = input_ids_cpu.to(device, non_blocking=pin_memory)
+            segment_ids = segment_ids_cpu.to(device, non_blocking=pin_memory)
+            forward_fn = (
+                compiled_model
+                if (compiled_model is not None and batch_len == bs)
+                else raw_model
+            )
+
             optimizer.zero_grad(set_to_none=True)
+            with autocast_ctx:
+                logits = forward_fn(input_ids, segment_ids)
+            loss, diag_gpu = _next_token_loss_step(
+                logits,
+                input_ids,
+                segment_ids,
+                restrict_to_segment=restrict_loss_to_segment,
+            )
             loss.backward()
             optimizer.step()
             optimizer_steps += 1
             tokens_consumed += n_tok
 
-            metrics_file.write(
-                json.dumps(
-                    {
-                        "step": optimizer_steps,
-                        "loss": float(loss.detach().cpu()),
-                        "tokens_in_step": n_tok,
-                        "tokens_consumed": tokens_consumed,
-                        "batch_size": batch_sizes[-1],
-                        **loss_diag,
-                    }
+            pending_steps.append(
+                (
+                    optimizer_steps,
+                    n_tok,
+                    tokens_consumed,
+                    batch_len,
+                    n_within,
+                    n_cross,
+                    diag_gpu,
                 )
-                + "\n"
             )
-            if optimizer_steps % 10 == 0:
-                metrics_file.flush()
+            if len(pending_steps) >= LOG_FLUSH_INTERVAL:
+                _flush_pending_metrics(metrics_file)
 
             if (
                 save_intermediate_every is not None
@@ -407,7 +546,7 @@ def run_training(
             ):
                 _save_checkpoint(
                     ckpt_dir / f"step_{optimizer_steps}_non_scoring.pt",
-                    model,
+                    raw_model,
                     scoring=False,
                     step=optimizer_steps,
                     config=config,
@@ -416,19 +555,21 @@ def run_training(
             if max_optimizer_steps is not None and optimizer_steps >= max_optimizer_steps:
                 break
 
+        _flush_pending_metrics(metrics_file)
+
     if max_optimizer_steps is None and optimizer_steps != projected_steps:
         raise RuntimeError(
             f"observed optimizer_steps {optimizer_steps} != projected "
             f"ceil(windows/batch_size)={projected_steps} "
             f"(n_windows={n_windows}, batch_size={bs}, "
-            f"batch_sizes={batch_sizes[:3]}...{batch_sizes[-3:]})"
+            f"first_batch={first_batch_size}, last_batch={last_batch_size})"
         )
 
     packing = PackingAccount(
         stream_tokens=stream_tokens,
         n_windows=n_windows,
         batch_size=bs,
-        last_batch_size=batch_sizes[-1] if batch_sizes else 0,
+        last_batch_size=last_batch_size,
         projected_optimizer_steps=projected_steps,
         observed_optimizer_steps=optimizer_steps,
         # iter_packed_batches has no drop_last; partial finals are trained.
@@ -436,13 +577,13 @@ def run_training(
     )
     _save_checkpoint(
         ckpt_dir / "final.pt",
-        model,
+        raw_model,
         scoring=True,
         step=optimizer_steps,
         config=config,
     )
 
-    param_count = model.param_count()
+    param_count = raw_model.param_count()
     flops = estimate_flops_proxy_token_updates(
         tokens_consumed, context_length=config.context_length_L
     )
@@ -452,7 +593,13 @@ def run_training(
     reproducibility: dict[str, Any] = {
         "git_commit": git_commit(),
         "git_dirty": git_dirty(),
-        **hardware_metadata(device),
+        **hardware_metadata(
+            device,
+            precision=resolved_precision,
+            torch_compile=use_compile,
+            fused_adamw=fused_adamw,
+        ),
+        "attention_mask_impl": "sdpa_bool_segment_ids",
         "config": config.to_dict(),
         "config_sha256": config_sha256(config),
         "budget_profile": config.budget_profile,

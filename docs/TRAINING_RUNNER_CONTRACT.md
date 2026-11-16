@@ -84,7 +84,8 @@ At `pool_episodes = 50000` the derivation reproduces the §1/§2 tables exactly;
 
 Per `.cursor/rules/02-reproducibility` and `PROGRAM_SPEC` §5:
 
-- `git_commit`
+- `git_commit` and `git_dirty` (bool, invariant I13)
+- hardware/precision metadata (`device_type`, `precision` — `bf16_mixed` on ROCm GPU / `fp32` on CPU per §I15, `torch_compile`, `fused_adamw`, `attention_mask_impl`) — excluded from `RunConfig` / `config_sha256`
 - full config dump plus `config_sha256` (SHA-256 over the sorted config dump; wall-clock is not a config field, so it is excluded by construction) — also the resume identity key (§4.5)
 - `budget_profile`
 - `harness_step_cap` — `null` for a full-budget run; an integer marks a step-capped smoke run whose `tokens_consumed` is below `T_eff`
@@ -343,8 +344,8 @@ Documented with rationales in `model/README.md` (and mirrored in `PROGRAM_SPEC.m
 | §2.2.1 budget profiles (derived, drift-guarded) | `train/config.py`, `tests/test_matrix_runner.py` |
 | §3 seed pairing | `train/config.py`, enforced in preflight |
 | §4.2 expansion, §4.5 resume + manifest | `train/matrix.py` |
-| §4.3 per-run outputs (minus `metrics_eval.json`) | `train/loop.py` |
+| §4.3 per-run outputs + unwrapped `checkpoints/final.pt` | `train/loop.py` |
 | §4.4 preflight gates + pool guard | `scripts/run_training_matrix.py` |
-| §4.3.1 `metrics_eval.json` | **not implemented** — no `eval/` producer |
-| §5 aggregation | **not implemented** — no input |
-| 50 000-episode re-encode + streaming packer | **follow-up**, gated on tiers 0/1 passing; required only for `full_v0` |
+| §4.3.1 `metrics_eval.json` | `eval/checkpoint.py`, `eval/score.py`, `scripts/evaluate_runs.py` (frozen `fp32`) |
+| §5 aggregation | `train/matrix.py`, `scripts/evaluate_runs.py --aggregate` |
+| 50 000-episode streaming packer + GPU `bf16_mixed` / `torch.compile` | `train/data.py`, `train/packer.py`, `train/loop.py`, `train/device.py` |

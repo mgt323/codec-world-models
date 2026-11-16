@@ -11,16 +11,32 @@ Usage::
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import pathlib
 import sys
 from collections import Counter
 
-TIER = sys.argv[1] if len(sys.argv) > 1 else "tier0"
+import torch
+
 EXPECTED_PARAMS = 11_056_896
 
-root = pathlib.Path("artifacts/runs") / TIER
+
+def _parse_args(argv: list[str] | None = None) -> tuple[str, pathlib.Path]:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("tier", nargs="?", default="tier0")
+    parser.add_argument(
+        "--output-root",
+        type=pathlib.Path,
+        default=pathlib.Path("artifacts"),
+        help="Root containing runs/{tier}/manifest.json (default: artifacts).",
+    )
+    args = parser.parse_args(argv)
+    return str(args.tier), args.output_root / "runs" / str(args.tier)
+
+
+TIER, root = _parse_args()
 manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
 
 print(f"profile         {manifest['budget_profile']}")
@@ -33,6 +49,7 @@ print()
 problems: list[str] = []
 fingerprints: dict[str, set[str]] = {}
 shuffle_by_rep: dict[int, set[int]] = {}
+precisions: set[str] = set()
 
 header = (
     f"{'cell':<32}{'steps':>7}{'proj':>6}{'windows':>9}{'stream':>11}"
@@ -87,8 +104,29 @@ for cell in sorted(
             problems.append(f"{key}: metrics_eval.json scoring_checkpoint is not final")
         if not eval_doc.get("git_commit"):
             problems.append(f"{key}: metrics_eval.json missing git_commit")
+        if not isinstance(eval_doc.get("git_dirty"), bool):
+            problems.append(f"{key}: metrics_eval.json git_dirty must be bool")
+
+    ckpt_path = run_dir / "checkpoints" / "final.pt"
+    if ckpt_path.is_file():
+        try:
+            ckpt_payload = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        except TypeError:
+            ckpt_payload = torch.load(ckpt_path, map_location="cpu")
+        state_dict = ckpt_payload.get("model_state_dict", {})
+        if any(str(k).startswith("_orig_mod.") for k in state_dict):
+            problems.append(f"{key}: final.pt contains _orig_mod. prefix keys")
 
     repro = json.loads((run_dir / "reproducibility.json").read_text(encoding="utf-8"))
+    if not repro.get("git_commit"):
+        problems.append(f"{key}: reproducibility.json missing git_commit")
+    if not isinstance(repro.get("git_dirty"), bool):
+        problems.append(f"{key}: reproducibility.json git_dirty must be bool")
+    cell_precision = repro.get("precision")
+    if not isinstance(cell_precision, str) or not cell_precision:
+        problems.append(f"{key}: reproducibility.json missing precision")
+    else:
+        precisions.add(cell_precision)
     config = repro["config"]
 
     # Basis is the packed stream, not tokens_consumed: the latter counts
@@ -161,6 +199,15 @@ for rep, seeds in sorted(shuffle_by_rep.items()):
 print(f"shuffle seed shared within rep:   {all(len(v) == 1 for v in shuffle_by_rep.values())}")
 print(f"shuffle seeds across reps:        "
       f"{sorted(next(iter(v)) for v in shuffle_by_rep.values())}")
+
+manifest_precision = manifest.get("precision")
+if len(precisions) != 1:
+    problems.append(f"mixed precisions across cells: {sorted(precisions)}")
+elif manifest_precision is not None and next(iter(precisions)) != manifest_precision:
+    problems.append(
+        f"cell precision {next(iter(precisions))!r} != manifest precision {manifest_precision!r}"
+    )
+print(f"uniform cell precision:           {sorted(precisions)}")
 
 print()
 print(f"PROBLEMS: {len(problems)}")

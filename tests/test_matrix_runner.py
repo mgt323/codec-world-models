@@ -477,7 +477,8 @@ def test_micro_matrix_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert manifest["interpretation"] == "plumbing_only"
     assert manifest["harness_step_cap"] == 1
     assert "git_dirty" in manifest
-    assert manifest["precision"] == "fp32"
+    expected_precision = "bf16_mixed" if manifest["device_type"] == "cuda" else "fp32"
+    assert manifest["precision"] == expected_precision
     assert "device_type" in manifest
     assert "torch_version" in manifest
     assert len(manifest["cells"]) == 4
@@ -510,3 +511,81 @@ def test_micro_matrix_resume_skips_completed(
 
     assert script.main(argv) == 0
     assert (run_dir / "checkpoints" / "final.pt").stat().st_mtime_ns == first_mtime
+
+
+@pytest.mark.integration
+def test_manifest_refuses_mixed_precision_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = _load_script()
+    profile = get_budget_profile("tier0")
+    tiny_pool = [[4 + (i % 20)] * 60 for i in range(profile.pool_episodes)]
+    monkeypatch.setattr(script, "episodes_from_parquet", lambda *a, **k: tiny_pool)
+
+    argv_fp32 = [
+        "--tier", "0",
+        "--codecs", "A",
+        "--replications", "1",
+        "--output-root", str(tmp_path),
+        "--smoke-max-steps", "1",
+        "--precision", "fp32",
+    ]
+    assert script.main(argv_fp32) == 0
+
+    manifest_path = tmp_path / "runs" / "tier0" / MANIFEST_NAME
+    manifest = load_manifest(manifest_path)
+    assert manifest is not None
+    manifest["precision"] = "bf16_mixed"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="refusing to mix precision"):
+        script.main(argv_fp32)
+
+
+@pytest.mark.integration
+def test_matrix_runner_propagates_encoded_dir_and_vocab_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import shutil
+
+    import pandas as pd
+
+    script = _load_script()
+    profile = get_budget_profile("tier0")
+    enc_dir = tmp_path / "custom_encoded"
+    vocab_dir = tmp_path / "custom_vocabs"
+    enc_dir.mkdir()
+    vocab_dir.mkdir()
+    shutil.copy2(_ROOT / "artifacts" / "vocabs" / "vocab_A.json", vocab_dir / "vocab_A.json")
+
+    vocab = json.loads((vocab_dir / "vocab_A.json").read_text(encoding="utf-8"))
+    toks = [k for k in vocab["token_to_id"] if not k.startswith("<")]
+    sample_str = " ".join(toks[:3])
+    rows = [
+        {"episode_seed": ep, "timestep": 0, "encoded_string": sample_str}
+        for ep in range(profile.pool_episodes + 5)
+    ]
+    pd.DataFrame(rows).to_parquet(enc_dir / "train_A.parquet", index=False)
+
+    seen_calls: list[tuple[Path | str | None, Path | str | None]] = []
+    orig_run_training = script.run_training
+
+    def _spy_run_training(*args, **kwargs):
+        seen_calls.append((kwargs.get("encoded_dir"), kwargs.get("vocab_dir")))
+        return orig_run_training(*args, **kwargs)
+
+    monkeypatch.setattr(script, "run_training", _spy_run_training)
+    rc = script.main(
+        [
+            "--tier", "0",
+            "--codecs", "A",
+            "--replications", "1",
+            "--output-root", str(tmp_path / "out"),
+            "--encoded-dir", str(enc_dir),
+            "--vocab-dir", str(vocab_dir),
+            "--smoke-max-steps", "1",
+            "--device", "cpu",
+        ]
+    )
+    assert rc == 0
+    assert seen_calls == [(enc_dir, vocab_dir), (enc_dir, vocab_dir)]
