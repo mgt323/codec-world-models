@@ -8,18 +8,21 @@ Canonical tooling for this repository. Prefer these versions and libraries; do n
 |---|---|
 | Language | **Python 3.13.15** |
 | Package manager | **uv** |
-| Deep learning | **PyTorch** |
-| Array / numerics | **numpy**, **scipy** |
-| Tabular analysis | **pandas** |
-| Plotting | **matplotlib** |
-| Data models | **pydantic** and/or stdlib **dataclasses** |
-| Array storage | **zarr** |
+| Deep learning | **PyTorch ROCm** (`torch` + `triton-rocm` from the `rocm7.2` wheel index on Linux x86_64; HIP is exposed as `torch.device("cuda")`) |
+| Array / numerics | **numpy** (`scipy` is an optional `analysis` extra for offline linear algebra) |
+| Tabular I/O | **pandas** + **pyarrow** (Parquet) |
+| Array storage | **h5py** (raw `State` trajectories) |
+| Data models | stdlib **dataclasses** |
+| Plotting | **matplotlib** (optional `analysis` extra; not used by training) |
 | Tests | **pytest** |
+
+`zarr` and `pydantic` are not dependencies. Stage-1 training stays in **fp32**.
 
 ## Project files
 
 - `.python-version` — pins the interpreter for uv/pyenv
-- `pyproject.toml` — dependencies and tool config (uv)
+- `pyproject.toml` — dependencies, the explicit `pytorch-rocm` index, and tool config (uv)
+- `uv.lock` — locked resolution, including the ROCm wheel URLs
 
 ## Conventions
 
@@ -29,7 +32,11 @@ Canonical tooling for this repository. Prefer these versions and libraries; do n
 
 ## Install (uv)
 
+The locked environment is Linux x86_64. On that platform `torch` and `triton-rocm` come from `https://download.pytorch.org/whl/rocm7.2`. The host ROCm stack for the RX 9070 XT (`gfx1201`) is `/opt/rocm` 7.2. Set `HSA_OVERRIDE_GFX_VERSION=12.0.1` only if `torch.cuda.get_arch_list()` does not include `gfx1201`.
+
 ```bash
-uv sync
+uv sync --group dev
 uv run pytest
 ```
+
+`uv sync --group analysis` adds `scipy` and `matplotlib` for offline probe and plotting work. They are not required to train or score.

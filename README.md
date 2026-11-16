@@ -46,7 +46,7 @@ codec-world-models/
 │   ├── vocab.py                 # Train-only vocab builder (shared B-family vocab) and OOV reporter
 │   ├── parity_audit.py          # Reusable codec-agnostic parse(encode(O)) == F(O) auditor
 │   ├── token_rates_train_v4.json        # Authoritative full-train regex_v4 token rates for budget derivation
-│   ├── diagnostics_A.json               # Legacy regex_v0 single-codec diagnostic artifact
+│   ├── diagnostics_A.json               # regex_v4 single-codec diagnostic artifact (500-sample parity fixture)
 │   ├── diagnostics_comparison_ABCD.json # 500-sample surface comparison across codecs A, B, C, D
 │   └── diagnostics_comparison_B_E.json  # 500-sample surface comparison across B and E-transforms
 ├── data/

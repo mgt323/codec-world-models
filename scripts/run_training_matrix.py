@@ -1,8 +1,8 @@
 """Run the stage-1 training matrix for one budget profile (tier).
 
 Implements docs/TRAINING_RUNNER_CONTRACT.md §4. Budgets are derived from the §0
-formula at the tier's pool size — no per-tier literals. Aggregation (§5) is not
-implemented: no ``metrics_eval.json`` producer exists yet.
+formula at the tier's pool size — no per-tier literals. See ``scripts/evaluate_runs.py``
+for post-training scoring and §5 aggregation.
 
 Example::
 
@@ -29,8 +29,10 @@ from train.config import (  # noqa: E402
     validate_run_config,
 )
 from train.data import episodes_from_parquet, load_codec_vocab  # noqa: E402
+from train.device import hardware_metadata, resolve_device  # noqa: E402
 from train.loop import (  # noqa: E402
     git_commit,
+    git_dirty,
     project_optimizer_steps,
     run_training,
 )
@@ -55,8 +57,9 @@ from train.matrix import (  # noqa: E402
 )
 
 TIER_PROFILES = {0: "tier0", 1: "tier1"}
-# Rough CPU throughput measured on this repo's reference box (s / optimizer step).
-SECONDS_PER_STEP_ESTIMATE = 4.0
+# Measured FP32 AdamW step on the RX 9070 XT (gfx1201), torch 2.14.1+rocm7.2,
+# batch 8, L=1024, the locked additive segment mask. Engineering estimate only.
+SECONDS_PER_STEP_ESTIMATE = 0.27
 
 
 def _tier_segment(profile: BudgetProfile) -> str:
@@ -123,7 +126,7 @@ def _preflight(
     print(f"projected steps  {total_steps:,}")
     print(
         f"est wall-clock   ~{total_steps * SECONDS_PER_STEP_ESTIMATE / 3600:.1f} h "
-        f"at {SECONDS_PER_STEP_ESTIMATE:.0f}s/step"
+        f"at {SECONDS_PER_STEP_ESTIMATE:.2f}s/step"
     )
     print()
     return pools
@@ -154,10 +157,21 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--budget-profile", choices=sorted(BUDGET_PROFILES))
     parser.add_argument("--codecs", nargs="+", default=list(DEFAULT_CODECS))
     parser.add_argument("--regimes", nargs="+", default=list(DEFAULT_REGIMES))
-    parser.add_argument("--replications", type=int, default=3)
+    parser.add_argument("--replications", type=int, default=5)
     parser.add_argument("--output-root", type=Path, default=_ROOT / "artifacts")
     parser.add_argument("--vocab-dir", type=Path, default=_ROOT / "artifacts" / "vocabs")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    parser.add_argument(
+        "--device",
+        choices=("auto", "rocm", "cuda", "cpu"),
+        default="auto",
+        help="auto prefers ROCm/HIP (torch.cuda). rocm and cuda are the same device.",
+    )
+    parser.add_argument(
+        "--require-gpu",
+        action="store_true",
+        help="Abort when the resolved device is CPU.",
+    )
     parser.add_argument(
         "--force",
         action="store_true",
@@ -187,6 +201,15 @@ def main(argv: list[str] | None = None) -> int:
     profile = get_budget_profile(profile_name)
     segment = _tier_segment(profile)
 
+    min_replications = (
+        3 if profile.scientific and args.smoke_max_steps is None else None
+    )
+    try:
+        device = resolve_device(args.device, require_gpu=args.require_gpu)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"device           {device} ({args.device})")
+
     cells = expand_matrix(
         profile=profile,
         codecs=args.codecs,
@@ -194,6 +217,7 @@ def main(argv: list[str] | None = None) -> int:
         n_replications=args.replications,
         output_root=args.output_root,
         runs_subdir=segment,
+        min_replications=min_replications,
     )
 
     _print_budget_table(cells)
@@ -201,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
         cells, profile, vocab_dir=args.vocab_dir, batch_size=args.batch_size
     )
 
+    hw_meta = hardware_metadata(device)
     manifest_path = Path(args.output_root) / "runs" / segment / MANIFEST_NAME
     manifest = load_manifest(manifest_path)
     expected_keys = {c.key for c in cells}
@@ -213,7 +238,11 @@ def main(argv: list[str] | None = None) -> int:
             n_replications=args.replications,
             git_commit=git_commit(),
             smoke_max_steps=args.smoke_max_steps,
+            git_dirty=git_dirty(),
+            hardware=hw_meta,
         )
+    else:
+        manifest.update(hw_meta)
     index = manifest_cell_index(manifest)
 
     if args.dry_run:
@@ -240,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
             result = run_training(
                 cell.config,
                 output_root=args.output_root,
+                device=device,
                 episode_pool=pools[cell.config.codec],
                 batch_size=args.batch_size,
                 max_optimizer_steps=args.smoke_max_steps,
@@ -278,6 +308,7 @@ def main(argv: list[str] | None = None) -> int:
             status=STATUS_COMPLETED,
             optimizer_steps=result.optimizer_steps,
             tokens_consumed=result.tokens_consumed,
+            wall_clock_seconds=result.wall_clock_seconds,
             error=None,
         )
         write_manifest_atomic(manifest_path, manifest)

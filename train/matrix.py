@@ -1,15 +1,14 @@
-"""Training-matrix expansion, resume state, and manifest I/O.
+"""Training-matrix expansion, resume state, manifest I/O, and §5 aggregation.
 
 Implements docs/TRAINING_RUNNER_CONTRACT.md §4 (expansion, per-run outputs,
-entrypoint responsibilities). Aggregation (§5) is deliberately not implemented:
-no ``metrics_eval.json`` producer exists yet, so there is nothing to aggregate.
+entrypoint responsibilities) and §5 (cross-replication median/IQR summaries).
 """
 
 from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,10 +68,21 @@ def expand_matrix(
     n_replications: int,
     output_root: Path | str,
     runs_subdir: str | None = None,
+    min_replications: int | None = None,
 ) -> list[MatrixCell]:
-    """Contract §4.2 expansion: regimes x codecs x replications."""
+    """Contract §4.2 expansion: regimes x codecs x replications.
+
+    ``min_replications`` enforces invariant I14 for scientific profiles. The
+    matrix entrypoint sets it to 3 for ``full_v0`` unless a smoke step cap is
+    in effect. Unit tests that expand a single cell leave it unset.
+    """
     if n_replications < 1:
         raise ValueError("n_replications must be >= 1")
+    if min_replications is not None and n_replications < min_replications:
+        raise ValueError(
+            f"n_replications must be >= {min_replications} for profile "
+            f"{profile.name} (got {n_replications})"
+        )
     unknown_codecs = sorted(set(codecs) - ALLOWED_CODECS)
     if unknown_codecs:
         raise ValueError(f"Unknown codecs: {unknown_codecs}")
@@ -200,9 +210,11 @@ def build_manifest(
     n_replications: int,
     git_commit: str,
     smoke_max_steps: int | None,
+    git_dirty: bool = False,
+    hardware: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Fresh manifest with every cell pending."""
-    return {
+    payload: dict[str, Any] = {
         "budget_profile": profile.name,
         "pool_episodes": profile.pool_episodes,
         "T_target": float(profile.t_target),
@@ -211,6 +223,7 @@ def build_manifest(
         "match_regimes": list(match_regimes),
         "n_replications": n_replications,
         "git_commit": git_commit,
+        "git_dirty": git_dirty,
         "created_utc": _utc_now(),
         "updated_utc": _utc_now(),
         "budget_table": budget_table(profile, list(codecs)),
@@ -237,6 +250,9 @@ def build_manifest(
             for cell in cells
         ],
     }
+    if hardware is not None:
+        payload.update(dict(hardware))
+    return payload
 
 
 def manifest_cell_index(manifest: dict[str, Any]) -> dict[str, int]:
@@ -265,6 +281,88 @@ def update_cell(
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def aggregate_scientific_metrics(
+    runs_root: Path,
+    *,
+    profile_name: str,
+    output_root: Path | str,
+    git_commit: str,
+    git_dirty: bool,
+    allow_pilot: bool = False,
+) -> list[Path]:
+    """Write contract §5 summaries for a scientific profile.
+
+    ``tier0`` and ``tier1`` are refused unless ``allow_pilot=True``. Quartiles
+    use ``numpy.percentile(..., method="linear")``. A metric that is null for
+    every replication is omitted rather than aggregated.
+    """
+    import numpy as np
+
+    profile = get_budget_profile(profile_name)
+    if not profile.scientific and not allow_pilot:
+        raise ValueError(
+            f"aggregation is refused for plumbing profile {profile.name}"
+        )
+    written: list[Path] = []
+    root = Path(runs_root)
+    if not root.is_dir():
+        raise FileNotFoundError(root)
+    # runs_root is artifacts/runs/full_v0: match_regime / codec / repN
+    by_cell: dict[tuple[str, str, str, str], list[float]] = {}
+    for metrics_path in sorted(root.glob("*/*/*/metrics_eval.json")):
+        rep_dir = metrics_path.parent
+        codec = rep_dir.parent.name
+        match_regime = rep_dir.parent.parent.name
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+        splits = payload.get("splits", payload)
+        for split_name, metrics in splits.items():
+            if not isinstance(metrics, dict):
+                continue
+            for metric_name, value in metrics.items():
+                if value is None:
+                    continue
+                by_cell.setdefault(
+                    (match_regime, str(split_name), str(metric_name), codec),
+                    [],
+                ).append(float(value))
+    summaries: dict[tuple[str, str], dict[str, Any]] = {}
+    for (match_regime, split_name, metric_name, codec), values in sorted(by_cell.items()):
+        array = np.asarray(values, dtype=np.float64)
+        q1, median, q3 = np.percentile(array, [25.0, 50.0, 75.0], method="linear")
+        bucket = summaries.setdefault(
+            (match_regime, split_name),
+            {
+                "match_regime": match_regime,
+                "eval_split": split_name,
+                "budget_profile": profile.name,
+                "n_replications": len(values),
+                "aggregation": "median_iqr",
+                "percentile_method": "linear",
+                "git_commit": git_commit,
+                "git_dirty": git_dirty,
+                "metrics": {},
+            },
+        )
+        bucket["metrics"].setdefault(metric_name, {})[codec] = {
+            "median": float(median),
+            "q1": float(q1),
+            "q3": float(q3),
+            "iqr": float(q3 - q1),
+            "values": [float(value) for value in values],
+        }
+        bucket["n_replications"] = max(bucket["n_replications"], len(values))
+    out_root = Path(output_root)
+    for (match_regime, split_name), payload in sorted(summaries.items()):
+        path = out_root / "runs" / "aggregates" / match_regime / split_name / "summary.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        written.append(path)
+    return written
 
 
 def iter_pool_requirements(cells: Sequence[MatrixCell]) -> Iterator[str]:

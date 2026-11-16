@@ -100,8 +100,15 @@ def _state_from_row(
     )
 
 
-def read_episodes_hdf5(path: Path) -> list[tuple[int, list[State]]]:
-    """Load one split written by ``write_episodes_hdf5*`` as ``(seed, states)``."""
+def read_episodes_hdf5(
+    path: Path,
+    *,
+    max_episodes: int | None = None,
+) -> list[tuple[int, list[State]]]:
+    """Load one split written by ``write_episodes_hdf5*`` as ``(seed, states)``.
+
+    ``max_episodes`` keeps the leading episodes in file order (seed order).
+    """
     with h5py.File(path, "r") as f:
         schema = _as_str(f.attrs.get("schema", ""))
         if schema and schema != _SCHEMA_V0:
@@ -129,9 +136,28 @@ def read_episodes_hdf5(path: Path) -> list[tuple[int, list[State]]]:
         raise ValueError(
             f"{path}: episode_seed length {len(episode_seeds)} != n_episodes={n_episodes}"
         )
+    n_take = n_episodes if max_episodes is None else min(n_episodes, max_episodes)
+    if max_episodes is not None and max_episodes < 0:
+        raise ValueError(f"max_episodes must be >= 0, got {max_episodes}")
+    episode_seeds = episode_seeds[:n_take]
+    t = t[:n_take]
+    a = a[:n_take]
+    b = b[:n_take]
+    a_observed = a_observed[:n_take]
+    b_observed = b_observed[:n_take]
+    noise_bin = noise_bin[:n_take]
+    n_samples = n_samples[:n_take]
+    source = source[:n_take]
+    latent_hidden_c = latent_hidden_c[:n_take]
+    latent_regime = latent_regime[:n_take]
+    latent_oracle = latent_oracle[:n_take]
+    inter_present = inter_present[:n_take]
+    inter_target = inter_target[:n_take]
+    inter_value = inter_value[:n_take]
+    inter_timestep = inter_timestep[:n_take]
 
     episodes: list[tuple[int, list[State]]] = []
-    for i in range(n_episodes):
+    for i in range(n_take):
         states: list[State] = []
         for j in range(n_steps):
             states.append(

@@ -56,8 +56,37 @@ for cell in sorted(
     ):
         if not (run_dir / name).exists():
             problems.append(f"{key}: missing {name}")
-    if (run_dir / "metrics_eval.json").exists():
-        problems.append(f"{key}: metrics_eval.json must stay absent (no producer)")
+    eval_path = run_dir / "metrics_eval.json"
+    if manifest.get("eval_status") == "scored" and not eval_path.is_file():
+        problems.append(f"{key}: manifest eval_status=scored but missing metrics_eval.json")
+    if eval_path.is_file():
+        eval_doc = json.loads(eval_path.read_text(encoding="utf-8"))
+        splits = eval_doc.get("splits", {})
+        for split_name in ("val", "ood_partial_obs", "intervention", "counterfactual"):
+            metrics = splits.get(split_name)
+            if not isinstance(metrics, dict):
+                problems.append(f"{key}: metrics_eval.json missing split {split_name}")
+                continue
+            for metric_name in (
+                "next_state_mse",
+                "regime_accuracy",
+                "intervention_accuracy",
+                "calibration_ece",
+                "calibration_brier",
+                "counterfactual_divergence_mse",
+                "partial_obs_next_state_mse",
+                "ood_regime_accuracy",
+                "transfer_aligned_next_state_mse",
+                "next_state_parse_rate",
+            ):
+                if metric_name not in metrics:
+                    problems.append(
+                        f"{key}: metrics_eval.json {split_name} missing {metric_name}"
+                    )
+        if eval_doc.get("scoring_checkpoint") != "final":
+            problems.append(f"{key}: metrics_eval.json scoring_checkpoint is not final")
+        if not eval_doc.get("git_commit"):
+            problems.append(f"{key}: metrics_eval.json missing git_commit")
 
     repro = json.loads((run_dir / "reproducibility.json").read_text(encoding="utf-8"))
     config = repro["config"]
