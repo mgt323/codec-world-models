@@ -21,6 +21,7 @@ METRIC_KEYS: tuple[str, ...] = (
     "ood_regime_accuracy",
     "transfer_aligned_next_state_mse",
     "next_state_parse_rate",
+    "parse_fail_rate",
 )
 
 # ood_noise / ood_confound / ood_regime_switch are not unlocked (PROGRAM_SPEC).

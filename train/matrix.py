@@ -291,6 +291,11 @@ def aggregate_scientific_metrics(
     git_commit: str,
     git_dirty: bool,
     allow_pilot: bool = False,
+    aggregates_dir: Path | str | None = None,
+    eval_schema_version: str | None = None,
+    decoder_mode: str | None = None,
+    eval_git_commit: str | None = None,
+    eval_git_dirty: bool | None = None,
 ) -> list[Path]:
     """Write contract §5 summaries for a scientific profile.
 
@@ -342,6 +347,22 @@ def aggregate_scientific_metrics(
                 "percentile_method": "linear",
                 "git_commit": git_commit,
                 "git_dirty": git_dirty,
+                **(
+                    {"eval_schema_version": eval_schema_version}
+                    if eval_schema_version is not None
+                    else {}
+                ),
+                **({"decoder_mode": decoder_mode} if decoder_mode is not None else {}),
+                **(
+                    {"eval_git_commit": eval_git_commit}
+                    if eval_git_commit is not None
+                    else {}
+                ),
+                **(
+                    {"eval_git_dirty": eval_git_dirty}
+                    if eval_git_dirty is not None
+                    else {}
+                ),
                 "metrics": {},
             },
         )
@@ -354,8 +375,13 @@ def aggregate_scientific_metrics(
         }
         bucket["n_replications"] = max(bucket["n_replications"], len(values))
     out_root = Path(output_root)
+    agg_base = (
+        Path(aggregates_dir)
+        if aggregates_dir is not None
+        else out_root / "runs" / "aggregates"
+    )
     for (match_regime, split_name), payload in sorted(summaries.items()):
-        path = out_root / "runs" / "aggregates" / match_regime / split_name / "summary.json"
+        path = agg_base / match_regime / split_name / "summary.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n",

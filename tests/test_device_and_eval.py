@@ -10,7 +10,7 @@ import pytest
 import torch
 
 from eval.checkpoint import load_scoring_checkpoint
-from eval.decode import reconstruct_with_skeleton
+from eval.decode import reconstruct_field_to_delimiter, reconstruct_with_skeleton
 from eval.metrics import METRIC_KEYS, median_iqr
 from model.architecture import build_model
 from model.init import initialize_model
@@ -365,4 +365,129 @@ def test_generate_eval_splits_and_evaluate_runs_end_to_end(
         assert set(METRIC_KEYS).issubset(split_metrics.keys())
     updated_manifest = json.loads((runs_root / "manifest.json").read_text(encoding="utf-8"))
     assert updated_manifest["eval_status"] == "scored"
+    assert updated_manifest["eval_schema_version"]
+    assert metrics_doc["eval_schema_version"] == updated_manifest["eval_schema_version"]
+    assert metrics_doc["splits"]["intervention"]["parse_fail_rate"] is not None
+    assert 0.0 <= metrics_doc["splits"]["intervention"]["parse_fail_rate"] <= 1.0
+
+
+def test_intervention_values_match_training_token_length_distribution() -> None:
+    from collections import Counter
+
+    from data.generate_episodes import generate_split
+    from eval.score import (
+        INTERVENTION_BASE_SEED,
+        make_counterfactual_pairs,
+        make_intervention_episodes,
+    )
+    from obs_codecs.encode_b import _format_value
+    from world.simulate import DEFAULT_DIFFICULTY_V0
+
+    n_episodes = 400
+    int_eps_a = make_intervention_episodes(
+        n_episodes, base_seed=INTERVENTION_BASE_SEED, n_steps=10
+    )
+    int_eps_b = make_intervention_episodes(
+        n_episodes, base_seed=INTERVENTION_BASE_SEED, n_steps=10
+    )
+    assert int_eps_a == int_eps_b  # Deterministic from seed
+
+    cf_pairs = make_counterfactual_pairs(64, base_seed=6_000_000, n_steps=10)
+    cf_vals = [
+        states[5].active_intervention.value
+        for _, (_seed, states) in cf_pairs
+        if states[5].active_intervention is not None
+    ]
+    assert len(set(cf_vals)) > 10  # Not a hardcoded constant like 0.85
+
+    int_lengths: list[int] = []
+    for _seed, states in int_eps_a:
+        active = states[5].active_intervention
+        assert active is not None
+        int_lengths.append(len(tokenize(_format_value(active.value))))
+
+    train_eps = list(
+        generate_split(
+            "train",
+            n_episodes,
+            DEFAULT_DIFFICULTY_V0,
+            base_seed=10_000,
+            n_steps=10,
+        )
+    )
+    train_lengths: list[int] = []
+    for _seed, states in train_eps:
+        for st in states:
+            train_lengths.append(len(tokenize(_format_value(st.a))))
+            train_lengths.append(len(tokenize(_format_value(st.b))))
+
+    int_hist = Counter(int_lengths)
+    train_hist = Counter(train_lengths)
+    all_keys = set(int_hist) | set(train_hist)
+    tv_distance = 0.5 * sum(
+        abs(int_hist[k] / len(int_lengths) - train_hist[k] / len(train_lengths))
+        for k in all_keys
+    )
+    mean_int = sum(int_lengths) / len(int_lengths)
+    mean_train = sum(train_lengths) / len(train_lengths)
+    assert abs(mean_int - mean_train) < 0.25
+    assert tv_distance < 0.10
+    # Guard against short constant artifacts like 0.85 (4 tokens)
+    assert sum(1 for k in int_lengths if k >= 11) / len(int_lengths) > 0.95
+
+
+def test_intervention_accuracy_reports_parse_fail_rate_and_optional_decoder() -> None:
+    from eval.score import intervention_accuracy, make_intervention_episodes
+    from obs_codecs.vocab import SPECIAL_TOKENS
+
+    int_eps = make_intervention_episodes(4, base_seed=5_000_000, n_steps=6)
+    content_tokens = sorted(
+        {
+            tok
+            for _seed, states in int_eps
+            for s in states
+            for tok in tokenize(encode_B(observe(s)))
+        }
+    )
+    id_to_token = list(SPECIAL_TOKENS) + content_tokens
+    vocab = VocabArtifact(
+        token_to_id={tok: idx for idx, tok in enumerate(id_to_token)},
+        id_to_token=id_to_token,
+        metadata={"codec": "B"},
+    )
+    model = build_model()
+    initialize_model(model, model_init_seed=1234, codec_name="B")
+    res = intervention_accuracy(model, "B", int_eps, vocab, torch.device("cpu"))
+    assert isinstance(res, dict)
+    assert set(res.keys()) == {"accuracy", "parse_fail_rate"}
+    assert res["accuracy"] is not None
+    assert res["parse_fail_rate"] is not None
+    assert 0.0 <= res["accuracy"] <= 1.0
+    assert 0.0 <= res["parse_fail_rate"] <= 1.0
+
+    # Field-to-delimiter optional decoder handles numeric overflow/early-delimiter
+    # while leaving structural errors (e.g. co-vary vs miss) broken.
+    true_text = "(observe A=0.123456789) → (co-vary B=0.1234567891) → (meta n=3 source=sensor_both noise=medium)"
+    toks = tokenize(true_text)
+    # 1) Overflow digit into ')' after A's 9-digit value
+    toks_overflow = list(toks)
+    a_close_idx = toks_overflow.index(")")
+    toks_overflow[a_close_idx] = "7"
+    assert reconstruct_with_skeleton(true_text, toks_overflow) is not None
+    with pytest.raises(ValueError):
+        observation_from_B(reconstruct_with_skeleton(true_text, toks_overflow) or "")
+    rebuilt_overflow = reconstruct_field_to_delimiter(true_text, toks_overflow)
+    assert rebuilt_overflow is not None
+    parsed_overflow = observation_from_B(rebuilt_overflow)
+    assert parsed_overflow.a_value == pytest.approx(0.123456789)
+
+    # 2) Early delimiter inside B's numeric span
+    toks_early = list(toks)
+    b_start = toks_early.index("B") + 2  # after B, =
+    toks_early[b_start + 5] = ")"
+    rebuilt_early = reconstruct_field_to_delimiter(true_text, toks_early)
+    assert rebuilt_early is not None
+    parsed_early = observation_from_B(rebuilt_early)
+    assert parsed_early.b_value == pytest.approx(0.123)
+
 
