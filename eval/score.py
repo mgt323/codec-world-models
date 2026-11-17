@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 from data.encode_episodes import CodecVariant, codec_variants
-from eval.decode import reconstruct_with_skeleton
+from eval.decode import reconstruct_field_to_delimiter, reconstruct_with_skeleton
 from eval.metrics import (
     brier_score,
     empty_metrics,
@@ -30,9 +30,10 @@ from obs_codecs.encode_a import observation_from_A
 from obs_codecs.encode_b import observation_from_B, observation_from_B_unordered
 from obs_codecs.encode_c import observation_from_C
 from obs_codecs.encode_d import observation_from_D
+from obs_codecs.transforms_e import blake2b_u64
 from obs_codecs.vocab import BOS_ID, EOS_ID, VocabArtifact, encode_string_ids
 from world.schema import CausalRegime, Intervention, InterventionTarget, Observation, State, observe
-from world.simulate import DEFAULT_DIFFICULTY_V0
+from world.simulate import DEFAULT_DIFFICULTY_V0, simulate
 
 # Shared across codecs. Not a RunConfig field and not a matching axis.
 EVAL_MAX_EPISODES = 64
@@ -41,6 +42,8 @@ EVAL_SUITE_EPISODES = 32
 PROBE_L2 = 1e-2
 INTERVENTION_BASE_SEED = 5_000_000
 COUNTERFACTUAL_BASE_SEED = 6_000_000
+EVAL_SCHEMA_VERSION = "eval_v2"
+DECODER_MODES: tuple[str, ...] = ("skeleton", "field_to_delimiter")
 
 _REGIMES: tuple[CausalRegime, ...] = tuple(CausalRegime)
 Episode = tuple[int, list[State]]
@@ -133,12 +136,27 @@ def _ids_to_tokens(ids: Sequence[int], vocab: VocabArtifact) -> list[str]:
     return out
 
 
+def _reconstruct_text(
+    true_text: str,
+    predicted_tokens: list[str],
+    *,
+    decoder_mode: str = "skeleton",
+) -> str | None:
+    if decoder_mode == "skeleton":
+        return reconstruct_with_skeleton(true_text, predicted_tokens)
+    if decoder_mode == "field_to_delimiter":
+        return reconstruct_field_to_delimiter(true_text, predicted_tokens)
+    raise ValueError(f"Unknown decoder_mode {decoder_mode!r}; expected one of {DECODER_MODES}")
+
+
 def next_state_errors(
     model: DecoderOnlyLM,
     codec: str,
     episodes: Sequence[Episode],
     vocab: VocabArtifact,
     device: torch.device,
+    *,
+    decoder_mode: str = "skeleton",
 ) -> tuple[list[float], int, int]:
     """Squared errors of recovered continuous values, plus parse counts.
 
@@ -160,7 +178,11 @@ def next_state_errors(
             if len(pred_ids) != end - start:
                 continue
             true_text = variant.encode_row(observe(target), seed, index + 1)
-            text = reconstruct_with_skeleton(true_text, _ids_to_tokens(pred_ids, vocab))
+            text = _reconstruct_text(
+                true_text,
+                _ids_to_tokens(pred_ids, vocab),
+                decoder_mode=decoder_mode,
+            )
             if text is None:
                 continue
             try:
@@ -276,11 +298,14 @@ def score_passive_split(
     partial_obs: bool,
     transfer_model_codec: str | None = None,
     transfer_episodes: Sequence[Episode] | None = None,
+    decoder_mode: str = "skeleton",
 ) -> dict[str, float | None]:
     """Tasks 1, 2, 5, 6, and 8 for one passive split."""
     metrics = empty_metrics()
     scored = _cap(episodes, EVAL_MAX_EPISODES)
-    errors, parsed, attempted = next_state_errors(model, codec, scored, vocab, device)
+    errors, parsed, attempted = next_state_errors(
+        model, codec, scored, vocab, device, decoder_mode=decoder_mode
+    )
     metrics["next_state_mse"] = mean_or_none(errors)
     metrics["next_state_parse_rate"] = (
         float(parsed / attempted) if attempted else None
@@ -308,6 +333,7 @@ def score_passive_split(
             _cap(transfer_episodes, EVAL_MAX_EPISODES),
             vocab,
             device,
+            decoder_mode=decoder_mode,
         )
         metrics["transfer_aligned_next_state_mse"] = mean_or_none(transfer_errors)
     return metrics
@@ -319,17 +345,20 @@ def intervention_accuracy(
     episodes: Sequence[Episode],
     vocab: VocabArtifact,
     device: torch.device,
-) -> float | None:
+    *,
+    decoder_mode: str = "skeleton",
+) -> dict[str, float | None]:
     """Fraction of post-intervention steps whose affected value bin matches.
 
     ``do(A)`` scores B; ``do(B)`` scores A. Episodes with no intervention are
-    skipped.
+    skipped. Returns ``{"accuracy": ..., "parse_fail_rate": ...}``.
     """
     from world.schema import quantize_value
 
     variant = variant_for(codec)
     parser = _parser(codec)
     hits = 0
+    parse_fails = 0
     total = 0
     framed = _framed_token_spans(_cap(episodes, EVAL_SUITE_EPISODES), variant, vocab)
     for seed, stream, spans in framed:
@@ -341,16 +370,23 @@ def intervention_accuracy(
             pred_ids = [token_id for token_id in predicted[start:end] if token_id is not None]
             if len(pred_ids) != end - start:
                 total += 1
+                parse_fails += 1
                 continue
             true_text = variant.encode_row(observe(state), seed, timestep)
-            text = reconstruct_with_skeleton(true_text, _ids_to_tokens(pred_ids, vocab))
+            text = _reconstruct_text(
+                true_text,
+                _ids_to_tokens(pred_ids, vocab),
+                decoder_mode=decoder_mode,
+            )
             if text is None:
                 total += 1
+                parse_fails += 1
                 continue
             total += 1
             try:
                 recovered = parser(text)
             except (ValueError, KeyError, IndexError):
+                parse_fails += 1
                 continue
             if intervention.target is InterventionTarget.A:
                 if recovered.b_value is None or not state.b_observed:
@@ -361,8 +397,11 @@ def intervention_accuracy(
                     continue
                 hits += int(quantize_value(recovered.a_value) == quantize_value(state.a))
     if total == 0:
-        return None
-    return hits / total
+        return {"accuracy": None, "parse_fail_rate": None}
+    return {
+        "accuracy": hits / total,
+        "parse_fail_rate": parse_fails / total,
+    }
 
 
 def counterfactual_divergence_mse(
@@ -371,13 +410,19 @@ def counterfactual_divergence_mse(
     pairs: Sequence[tuple[Episode, Episode]],
     vocab: VocabArtifact,
     device: torch.device,
+    *,
+    decoder_mode: str = "skeleton",
 ) -> float | None:
     """MSE between true and predicted mean |Δb| across counterfactual twins."""
     errors: list[float] = []
     for observational, intervened in list(pairs)[:EVAL_SUITE_EPISODES]:
         true_gap = _mean_abs_b_gap(observational[1], intervened[1])
-        pred_obs = _predicted_b_series(model, codec, observational, vocab, device)
-        pred_int = _predicted_b_series(model, codec, intervened, vocab, device)
+        pred_obs = _predicted_b_series(
+            model, codec, observational, vocab, device, decoder_mode=decoder_mode
+        )
+        pred_int = _predicted_b_series(
+            model, codec, intervened, vocab, device, decoder_mode=decoder_mode
+        )
         if true_gap is None or pred_obs is None or pred_int is None:
             continue
         errors.append((abs(pred_int - pred_obs) - true_gap) ** 2)
@@ -398,6 +443,8 @@ def _predicted_b_series(
     episode: Episode,
     vocab: VocabArtifact,
     device: torch.device,
+    *,
+    decoder_mode: str = "skeleton",
 ) -> float | None:
     variant = variant_for(codec)
     parser = _parser(codec)
@@ -409,7 +456,11 @@ def _predicted_b_series(
         if len(pred_ids) != end - start:
             continue
         true_text = variant.encode_row(observe(state), seed, timestep)
-        text = reconstruct_with_skeleton(true_text, _ids_to_tokens(pred_ids, vocab))
+        text = _reconstruct_text(
+            true_text,
+            _ids_to_tokens(pred_ids, vocab),
+            decoder_mode=decoder_mode,
+        )
         if text is None:
             continue
         try:
@@ -419,6 +470,13 @@ def _predicted_b_series(
         if recovered.b_value is not None:
             values.append(recovered.b_value)
     return mean_or_none(values)
+
+
+def _sample_intervention_value(seed: int, target: InterventionTarget) -> float:
+    """Sample a deterministic intervention value from the training distribution."""
+    derived = blake2b_u64(f"eval_intervention_value:{seed}:{target.value}")
+    states = simulate(derived, 1, difficulty=DEFAULT_DIFFICULTY_V0, interventions=None)
+    return float(states[0].a if target is InterventionTarget.A else states[0].b)
 
 
 def make_intervention_episodes(
@@ -434,7 +492,8 @@ def make_intervention_episodes(
     for index in range(n_episodes):
         seed = base_seed + index
         target = InterventionTarget.A if index % 2 == 0 else InterventionTarget.B
-        intervention = Intervention(target=target, value=0.85, timestep=n_steps // 2)
+        value = _sample_intervention_value(seed, target)
+        intervention = Intervention(target=target, value=value, timestep=n_steps // 2)
         states = generate_intervention_episode(
             seed, n_steps, DEFAULT_DIFFICULTY_V0, intervention
         )
@@ -451,11 +510,12 @@ def make_counterfactual_pairs(
     from data.generate_episodes import generate_counterfactual_pair
 
     pairs: list[tuple[Episode, Episode]] = []
-    intervention = Intervention(
-        target=InterventionTarget.A, value=0.85, timestep=n_steps // 2
-    )
     for index in range(n_pairs):
         seed = base_seed + index
+        value = _sample_intervention_value(seed, InterventionTarget.A)
+        intervention = Intervention(
+            target=InterventionTarget.A, value=value, timestep=n_steps // 2
+        )
         observational, intervened = generate_counterfactual_pair(
             seed, n_steps, DEFAULT_DIFFICULTY_V0, intervention
         )
@@ -463,8 +523,10 @@ def make_counterfactual_pairs(
     return pairs
 
 
-def protocol_record() -> dict[str, Any]:
+def protocol_record(*, decoder_mode: str = "skeleton") -> dict[str, Any]:
     return {
+        "eval_schema_version": EVAL_SCHEMA_VERSION,
+        "decoder_mode": decoder_mode,
         "eval_max_episodes": EVAL_MAX_EPISODES,
         "probe_train_episodes": PROBE_TRAIN_EPISODES,
         "eval_suite_episodes": EVAL_SUITE_EPISODES,

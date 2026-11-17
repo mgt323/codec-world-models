@@ -19,6 +19,7 @@ from configs.dataset_v0 import N_STEPS_V0  # noqa: E402
 from data.hdf5_episodes import write_episodes_hdf5_streaming  # noqa: E402
 from eval.score import (  # noqa: E402
     COUNTERFACTUAL_BASE_SEED,
+    EVAL_SCHEMA_VERSION,
     INTERVENTION_BASE_SEED,
     make_counterfactual_pairs,
     make_intervention_episodes,
@@ -71,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         split_name="counterfactual_intervened",
     )
     manifest = {
+        "eval_schema_version": EVAL_SCHEMA_VERSION,
         "n_episodes": args.n_episodes,
         "n_steps": args.n_steps,
         "intervention_base_seed": INTERVENTION_BASE_SEED,

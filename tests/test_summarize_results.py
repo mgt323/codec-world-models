@@ -11,7 +11,9 @@ import pytest
 from eval.metrics import median_iqr
 from eval.report import (
     MATCH_REGIMES,
+    PERMUTED_CONTROLS,
     REPORT_CODECS,
+    format_verdict_summary,
     load_and_aggregate_probes,
     load_report_bundle,
 )
@@ -27,10 +29,14 @@ def _write_synthetic_artifacts(
     tmp_path: Path,
     *,
     git_commit: str = "abc123def456",
-    parse_rate: float = 0.99,
+    ordered_parse_rate: float = 0.75,
+    permuted_parse_rate: float = 0.12,
+    parse_rate_overrides: dict[str, float] | None = None,
     val_mse_override: float | None = None,
     overlap_e_iqr: bool = False,
     swap_info_rank: bool = False,
+    intervention_acc_override: dict[str, list[float]] | None = None,
+    intervention_parse_fail_override: dict[str, list[float]] | None = None,
 ) -> tuple[Path, Path, Path]:
     aggregates_dir = tmp_path / "aggregates"
     probes_dir = tmp_path / "probes"
@@ -99,6 +105,15 @@ def _write_synthetic_artifacts(
         if val_mse_override is not None and regime == "compute_matched":
             val_mse_vals[2] = val_mse_override
 
+        parse_rates = {
+            c: (
+                parse_rate_overrides[c]
+                if parse_rate_overrides and c in parse_rate_overrides
+                else (permuted_parse_rate if c in PERMUTED_CONTROLS else ordered_parse_rate)
+            )
+            for c in REPORT_CODECS
+        }
+
         _write_json(
             aggregates_dir / regime / "val" / "summary.json",
             {
@@ -106,7 +121,7 @@ def _write_synthetic_artifacts(
                 "eval_split": "val",
                 "match_regime": regime,
                 "metrics": {
-                    "next_state_parse_rate": {c: median_iqr([parse_rate] * 5) for c in REPORT_CODECS},
+                    "next_state_parse_rate": {c: median_iqr([parse_rates[c]] * 5) for c in REPORT_CODECS},
                     "next_state_mse": {
                         c: median_iqr(val_mse_vals if c == "B" else [0.05] * 5)
                         for c in REPORT_CODECS
@@ -117,15 +132,28 @@ def _write_synthetic_artifacts(
                 },
             },
         )
+        int_metrics: dict[str, Any] = {
+            "intervention_accuracy": {
+                c: median_iqr(
+                    intervention_acc_override[c]
+                    if intervention_acc_override and c in intervention_acc_override
+                    else reg_vals[c]
+                )
+                for c in REPORT_CODECS
+            },
+        }
+        if intervention_parse_fail_override is not None:
+            int_metrics["parse_fail_rate"] = {
+                c: median_iqr(intervention_parse_fail_override.get(c, [0.10] * 5))
+                for c in REPORT_CODECS
+            }
         _write_json(
             aggregates_dir / regime / "intervention" / "summary.json",
             {
                 "git_commit": git_commit,
                 "eval_split": "intervention",
                 "match_regime": regime,
-                "metrics": {
-                    "intervention_accuracy": {c: median_iqr(reg_vals[c]) for c in REPORT_CODECS},
-                },
+                "metrics": int_metrics,
             },
         )
         _write_json(
@@ -150,7 +178,7 @@ def _write_synthetic_artifacts(
                 "metrics": {
                     "regime_accuracy": {c: median_iqr(reg_vals[c]) for c in REPORT_CODECS},
                     "partial_obs_next_state_mse": {c: median_iqr([0.10] * 5) for c in REPORT_CODECS},
-                    "next_state_parse_rate": {c: median_iqr([parse_rate] * 5) for c in REPORT_CODECS},
+                    "next_state_parse_rate": {c: median_iqr([parse_rates[c]] * 5) for c in REPORT_CODECS},
                 },
             },
         )
@@ -224,12 +252,13 @@ def test_probe_and_cka_aggregation_uses_linear_percentile(tmp_path: Path) -> Non
 
 
 def test_verdict_checks_sanity_iqr_separation_and_rank_shift(tmp_path: Path) -> None:
-    # 1. Clean fixture -> sanity passes & clear IQR separation
+    # 1. Clean fixture -> sanity passes (syntactic separation holds) & clear IQR separation
     agg_dir, probes_dir, manifest_path = _write_synthetic_artifacts(tmp_path / "clean")
     clean_bundle = load_report_bundle(agg_dir, probes_dir, manifest_path)
     assert clean_bundle.verdict.sanity_passed is True
     assert clean_bundle.verdict.completion_ok is True
     assert clean_bundle.verdict.finite_ok is True
+    assert clean_bundle.verdict.syntactic_separation_ok is True
     assert clean_bundle.verdict.extreme_outliers == []
     for regime in MATCH_REGIMES:
         assert clean_bundle.verdict.b_vs_e_outcomes[(regime, "val.regime_accuracy")] == "CLEAR_IQR_SEPARATION"
@@ -239,21 +268,35 @@ def test_verdict_checks_sanity_iqr_separation_and_rank_shift(tmp_path: Path) -> 
         )
     assert clean_bundle.verdict.regime_rank_shifts["val.regime_accuracy"]["largest_delta_rank"] == 0.0
 
-    # 2. Parse rate < 0.95 -> sanity fails
+    # 2a. Ordered codec parse rate <= 0.50 -> syntactic separation & sanity fail
     agg_dir, probes_dir, manifest_path = _write_synthetic_artifacts(
-        tmp_path / "low_parse", parse_rate=0.80
+        tmp_path / "low_ordered_parse", parse_rate_overrides={"B": 0.45}
     )
-    low_parse = load_report_bundle(agg_dir, probes_dir, manifest_path)
-    assert low_parse.verdict.sanity_passed is False
-    assert low_parse.verdict.parse_rate_passing_codecs["compute_matched"] == []
+    low_ordered = load_report_bundle(agg_dir, probes_dir, manifest_path)
+    assert low_ordered.verdict.syntactic_separation_ok is False
+    assert low_ordered.verdict.sanity_passed is False
+    assert "B" not in low_ordered.verdict.ordered_parse_passing["compute_matched"]
 
-    # 3. Extreme MSE outlier (1e12) -> sanity fails & outlier recorded
+    # 2b. Permuted control parse rate >= 0.25 -> syntactic separation & sanity fail
+    agg_dir, probes_dir, manifest_path = _write_synthetic_artifacts(
+        tmp_path / "high_permuted_parse", parse_rate_overrides={"B_bag": 0.30}
+    )
+    high_perm = load_report_bundle(agg_dir, probes_dir, manifest_path)
+    assert high_perm.verdict.syntactic_separation_ok is False
+    assert high_perm.verdict.sanity_passed is False
+    assert "B_bag" not in high_perm.verdict.permuted_parse_passing["compute_matched"]
+
+    # 3. Extreme MSE outlier (1e12) -> non-blocking warning, sanity still passes
     agg_dir, probes_dir, manifest_path = _write_synthetic_artifacts(
         tmp_path / "outlier", val_mse_override=1e12
     )
     outlier_bundle = load_report_bundle(agg_dir, probes_dir, manifest_path)
-    assert outlier_bundle.verdict.sanity_passed is False
+    assert outlier_bundle.verdict.sanity_passed is True
     assert len(outlier_bundle.verdict.extreme_outliers) == 1
+    outlier_summary = format_verdict_summary(outlier_bundle)
+    assert "Sanity Gate: PASS" in outlier_summary
+    assert "[WARN] MSE>1000 outliers (non-blocking, n=1):" in outlier_summary
+    assert "1e+12" in outlier_summary
 
     # 4. NaN value -> finite_ok False & sanity fails
     agg_dir, probes_dir, manifest_path = _write_synthetic_artifacts(
@@ -337,5 +380,51 @@ def test_summarize_results_cli_renders_tables_and_three_figures_headless(
             fpath = out_dir / fname
             assert fpath.stat().st_size > 0
             assert fpath.read_bytes().startswith(magic)
+
+
+def test_verdict_marks_measurement_invalid_when_parse_fail_rate_exceeds_half(
+    tmp_path: Path,
+) -> None:
+    # Even when intervention_accuracy is all zeros (which would otherwise be
+    # UNINFORMATIVE_FLOOR), parse_fail_rate > 0.5 for most codecs must yield
+    # MEASUREMENT_INVALID.
+    zero_acc = {c: [0.0] * 5 for c in REPORT_CODECS}
+    high_pf = {
+        "B": [0.95] * 5,
+        "C": [0.90] * 5,
+        "D": [0.95] * 5,
+        "A": [0.85] * 5,
+        "B_reverse": [0.80] * 5,
+        "B_bag": [0.99] * 5,
+        "B_shuffle": [0.99] * 5,
+    }
+    agg_dir, probes_dir, manifest_path = _write_synthetic_artifacts(
+        tmp_path / "invalid_int",
+        intervention_acc_override=zero_acc,
+        intervention_parse_fail_override=high_pf,
+    )
+    bundle = load_report_bundle(agg_dir, probes_dir, manifest_path)
+    for regime in MATCH_REGIMES:
+        key = (regime, "intervention.intervention_accuracy")
+        assert bundle.verdict.b_vs_e_outcomes[key] == "MEASUREMENT_INVALID"
+        assert bundle.verdict.b_vs_e_organization[key] == "MEASUREMENT_INVALID"
+        assert bundle.verdict.b_vs_e_direction[key] == "MEASUREMENT_INVALID"
+        assert "DEFERRED" in bundle.verdict.baseline_comparisons[regime]["B_vs_A"]
+
+    summary_text = format_verdict_summary(bundle)
+    assert "intervention=MEASUREMENT_INVALID" in summary_text
+
+    # When parse_fail_rate <= 0.5 for most codecs and accuracy is 0, verdict is UNINFORMATIVE_FLOOR.
+    low_pf = {c: [0.10] * 5 for c in REPORT_CODECS}
+    agg_dir2, probes_dir2, manifest_path2 = _write_synthetic_artifacts(
+        tmp_path / "floor_int",
+        intervention_acc_override=zero_acc,
+        intervention_parse_fail_override=low_pf,
+    )
+    bundle2 = load_report_bundle(agg_dir2, probes_dir2, manifest_path2)
+    for regime in MATCH_REGIMES:
+        key = (regime, "intervention.intervention_accuracy")
+        assert bundle2.verdict.b_vs_e_outcomes[key] == "UNINFORMATIVE_FLOOR"
+
 
 

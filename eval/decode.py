@@ -12,6 +12,8 @@ import re
 from obs_codecs.diagnostics import tokenize
 
 _NUMERIC_CHAR = frozenset("0123456789.")
+_NUMERIC_CHAR_OR_SIGN = frozenset("0123456789.-")
+_ENTITY_VALUE_PREFIXES = ("value=", "A=", "B=", "A.x=", "B.x=")
 _PUNCT = frozenset(":=,.;(){}|~→↑?")
 _TOKEN_RE = re.compile(
     r"[A-Za-z_][A-Za-z0-9_-]*|-?\d+(?:\.\d+)?|[:=,.;(){}|~→↑?]"
@@ -71,6 +73,63 @@ def reconstruct_with_skeleton(true_text: str, predicted_tokens: list[str]) -> st
         else:
             pieces.append(predicted_tokens[pred_index])
             pred_index += 1
+        cursor = match.end()
+    if pred_index != len(predicted_tokens):
+        return None
+    pieces.append(true_text[cursor:])
+    return "".join(pieces)
+
+
+def reconstruct_field_to_delimiter(
+    true_text: str,
+    predicted_tokens: list[str],
+) -> str | None:
+    """Optional field-to-delimiter decoder for variable-length numeric spans.
+
+    Unlike ``reconstruct_with_skeleton``, handles numeric-field length
+    mismatches without fabricating non-numeric structure:
+    - If a non-numeric token (e.g., an early delimiter) appears inside an
+      entity numeric span, truncates the numeric field before that token.
+    - If a numeric character overflows into the boundary token immediately
+      following an entity numeric span, restores the true boundary token.
+    """
+    if len(predicted_tokens) != len(tokenize(true_text)):
+        return None
+    matches = list(_TOKEN_RE.finditer(true_text))
+    pieces: list[str] = []
+    cursor = 0
+    pred_index = 0
+    prev_was_entity_num = False
+    for match in matches:
+        pieces.append(true_text[cursor : match.start()])
+        span = match.group()
+        if _NUMBER_SPAN_RE.fullmatch(span) is not None:
+            width = len(span)
+            chars = predicted_tokens[pred_index : pred_index + width]
+            if len(chars) != width:
+                return None
+            prefix = true_text[: match.start()]
+            is_entity_num = prefix.endswith(_ENTITY_VALUE_PREFIXES)
+            if is_entity_num:
+                kept: list[str] = []
+                for tok in chars:
+                    if tok in _NUMERIC_CHAR_OR_SIGN:
+                        kept.append(tok)
+                    else:
+                        break
+                pieces.append("".join(kept) if kept else "".join(chars))
+            else:
+                pieces.append("".join(chars))
+            pred_index += width
+            prev_was_entity_num = is_entity_num
+        else:
+            pred_tok = predicted_tokens[pred_index]
+            if prev_was_entity_num and pred_tok in _NUMERIC_CHAR_OR_SIGN:
+                pieces.append(span)
+            else:
+                pieces.append(pred_tok)
+            pred_index += 1
+            prev_was_entity_num = False
         cursor = match.end()
     if pred_index != len(predicted_tokens):
         return None
