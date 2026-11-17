@@ -60,17 +60,23 @@ codec-world-models/
 ├── train/
 │   ├── config.py                # RunConfig schema, Decimal budget derivation (tier0, tier1, full_v0), validation
 │   ├── data.py                  # Parquet -> token ID loader, pool_fingerprint(), reshuffle-per-epoch ordering
-│   ├── packer.py                # <bos>/<eos> episode framing and fixed L=1024 window packing with segment_ids
+│   ├── device.py                # ROCm/CPU device resolution, bf16_mixed autocast, torch.compile helpers
+│   ├── packer.py                # <bos>/<eos> episode framing and fixed L=1024 streaming/in-memory window packing
 │   ├── loop.py                  # Stage-1 next-token NLL training loop, checkpointing, reproducibility.json
-│   └── matrix.py                # Cartesian matrix expansion, seed pairing check, atomic manifest & resume
+│   └── matrix.py                # Cartesian matrix expansion, seed pairing check, atomic manifest, §5 aggregation
 ├── eval/
+│   ├── checkpoint.py            # Final-checkpoint loader (refuses non-final checkpoints, frozen fp32)
+│   ├── decode.py                # Autoregressive / constrained decoding helpers for codec evaluation
+│   ├── metrics.py               # Canonical eval metric keys (METRIC_KEYS) and empty_metrics()
 │   ├── regime_baseline.py       # World v0 calibration baselines (oracle, majority, O-only correlation heuristic)
+│   ├── report.py                # Report bundle loader, summary tables, and scientific verdict formatter
+│   ├── score.py                 # Frozen fp32 scoring (passive splits, interventions, counterfactuals, eval_v2)
 │   └── difficulty_sweep_*.json  # Pre-computed difficulty sweep outputs used to lock DEFAULT_DIFFICULTY_V0
-├── scripts/                     # CLI entrypoints for dataset generation, encoding, audits, and training
-└── tests/                       # 26 pytest suites enforcing determinism, parity, leakage, and runner contracts
+├── probes/
+│   └── rsa.py                   # Linear CKA, SVCCA, and orthogonal Procrustes similarity metrics
+├── scripts/                     # CLI entrypoints for dataset generation, encoding, audits, training, eval, probes, reporting
+└── tests/                       # 30 pytest suites enforcing determinism, parity, leakage, eval, and runner contracts
 ```
-
-*(Note: The `probes/` directory referenced in `docs/EXPERIMENT_PLAN.md` §10 and `docs/PROGRAM_SPEC.md` §4.1 does not exist on disk yet.)*
 
 ---
 
@@ -81,12 +87,12 @@ codec-world-models/
 The project requires **Python 3.13.15** (pinned in `.python-version` and `pyproject.toml`) and uses [`uv`](https://docs.astral.sh/uv/) for dependency management:
 
 ```bash
-uv sync
+uv sync --group dev
 ```
 
 ### 2. Run the Test Suite
 
-Run the unit test suite (26 test files; 6 tests are marked `@pytest.mark.integration`. The 3 in `tests/test_packing_step_accounting.py` and `tests/test_real_a_document_masking_integration.py` auto-skip until `artifacts/encoded/train_A.parquet` and `artifacts/vocabs/vocab_A.json` are generated; the 3 CLI integration tests in `tests/test_matrix_runner.py` use their own setup, so see that file):
+Run the unit test suite (30 test files; 6 tests are marked `@pytest.mark.integration`. The 3 in `tests/test_packing_step_accounting.py` and `tests/test_real_a_document_masking_integration.py` auto-skip until `artifacts/encoded/train_A.parquet` and `artifacts/vocabs/vocab_A.json` are generated; the 3 CLI integration tests in `tests/test_matrix_runner.py` use their own setup, so see that file):
 
 ```bash
 uv run pytest
@@ -151,8 +157,29 @@ uv run python scripts/run_training_matrix.py --tier 1 --replications 3
 uv run python scripts/verify_tier_artifacts.py tier1
 ```
 
-### 4. What Is Not Runnable Yet
+#### Step 3.6 — Generate Eval Splits, Score Runs & Aggregate (`metrics_eval.json` / `summary.json`)
+Generate the deterministic intervention and counterfactual evaluation splits, score `checkpoints/final.pt` in frozen `fp32` (`eval_v2`), and compute contract §5 median/IQR aggregates for `full_v0`:
 
-- **Trained-Model Evaluation (`eval/` Tasks 1–8 & `metrics_eval.json`)**: Only the non-learned World v0 calibration baseline (`eval/regime_baseline.py` / `scripts/run_regime_difficulty_sweep.py`) exists today. There is no script or module that loads `checkpoints/final.pt` to evaluate a trained Transformer on the 8 benchmark tasks or emit `metrics_eval.json`.
-- **Cross-Replication Aggregation (`docs/TRAINING_RUNNER_CONTRACT.md` §5)**: Blocked until a `metrics_eval.json` producer is implemented.
-- **Post-Hoc Frozen Linear Probes & RSA (`probes/`)**: The `probes/` package has not been created yet.
+```bash
+uv run python scripts/generate_eval_splits.py --out-dir artifacts/eval_splits
+uv run python scripts/evaluate_runs.py --budget-profile full_v0 --aggregate
+```
+
+#### Step 3.7 — Generate Scientific Report & Figures
+Render summary tables, scientific verdicts, and headless matplotlib figures from the aggregated `summary.json` outputs:
+
+```bash
+uv run python scripts/summarize_results.py
+```
+
+#### Step 3.8 — Run Post-Hoc Frozen Linear Probes & RSA
+Extract frozen layer activations over a shared world-state fixture and compute ridge/logistic probes plus CKA, SVCCA, and orthogonal Procrustes similarities:
+
+```bash
+uv run python scripts/run_probes.py --budget-profile full_v0
+```
+
+### 4. Deferred / Optional Items
+
+- **Optional Controls (`A-bag`, `C-shuffle`)**: Episode-level `A-bag` and field-level `C-shuffle` controls mentioned in `docs/EXPERIMENT_PLAN.md` §3 are not implemented.
+- **Unlocked OOD Axes (`ood_noise`, `ood_confound`, `ood_regime_switch`)**: Deferred per `docs/PROGRAM_SPEC.md` until empirical difficulty sweeps unlock them.

@@ -13,7 +13,7 @@ Canonical tooling for this repository. Prefer these versions and libraries; do n
 | Tabular I/O | **pandas** + **pyarrow** (Parquet) |
 | Array storage | **h5py** (raw `State` trajectories) |
 | Data models | stdlib **dataclasses** |
-| Plotting | **matplotlib** (optional `analysis` extra; not used by training) |
+| Plotting | **matplotlib** (`dev` and `analysis` extras; used by `scripts/summarize_results.py`, not used by training) |
 | Tests | **pytest** |
 
 `zarr` and `pydantic` are not dependencies. Under `INVARIANTS.md` §I15, Stage-1 training on ROCm GPU uses uniform **`bf16_mixed`** autocast across all codecs (keeping FP32 master weights, FP32 AdamW moments, FP32 `LayerNorm`, and FP32 cross-entropy loss), while CPU training and frozen `eval/` / `probes/` scoring stay in **`fp32`**.
@@ -39,4 +39,4 @@ uv sync --group dev
 uv run pytest
 ```
 
-`uv sync --group analysis` adds `scipy` and `matplotlib` for offline probe and plotting work. They are not required to train or score.
+`uv sync --group analysis` adds `scipy` (alongside `matplotlib`) for offline probe and plotting work. Neither is required to train or score.

@@ -200,7 +200,7 @@ artifacts/runs/{budget_profile}/{match_regime}/{codec}/rep{r}/
   reproducibility.json
 ```
 
-The `{budget_profile}` segment (`tier0` / `tier1` / `full_v0`) keeps pilot artifacts physically separate from scientific ones, so a pilot run can never be swept into aggregation by a path glob. `metrics_eval.json` is **absent** until `eval/` gains a producer — it is never stubbed with placeholder values.
+The `{budget_profile}` segment (`tier0` / `tier1` / `full_v0`) keeps pilot artifacts physically separate from scientific ones, so a pilot run can never be swept into aggregation by a path glob. `metrics_eval.json` is produced post-training by `scripts/evaluate_runs.py` from `checkpoints/final.pt` only — it is never stubbed with placeholder values.
 
 #### 4.3.1 `metrics_eval.json` schema (keyed by eval split)
 
@@ -233,7 +233,7 @@ All gates run **before any cell launches**, so a misconfigured matrix fails in s
 2. Enforce shared `data_shuffle_seed` across codecs for the same `replication_id`, distinct across replications, and both seeds paired to `replication_id` per §3.
 3. Refuse to start if `document_masking` is false, `reshuffle_policy != reshuffle_per_epoch`, or `scoring_checkpoint != final` / early-stopping enabled.
 4. **Pool-size guard:** for every codec in the matrix, load the encoded train split and assert the pool holds exactly `profile.pool_episodes` episodes. A stale or short corpus aborts the matrix instead of silently shrinking one codec's budget.
-5. Write aggregation inputs (§5) after all reps for a cell complete — using **only** final-checkpoint eval metrics (§2.6), preserving the eval-split key. *(Deferred: no `metrics_eval.json` producer exists yet, so §5 is unimplemented.)*
+5. Write aggregation inputs (§5) after all reps for a cell complete — using **only** final-checkpoint eval metrics (§2.6), preserving the eval-split key (implemented via `scripts/evaluate_runs.py --aggregate` and `train/matrix.py:aggregate_scientific_metrics`).
 
 The episode-pool cache is **process-scoped**: one tokenized pool per codec, held in memory for the duration of one invocation and never persisted. Every `--resume` re-invocation rebuilds it from the parquet and re-runs the guard.
 
@@ -250,7 +250,7 @@ The episode-pool cache is **process-scoped**: one tokenized pool per codec, held
 
 ## 5. Aggregation across replications
 
-**Status: specified, not implemented.** Aggregation consumes `metrics_eval.json`, and `eval/` has no producer yet, so there is no input to aggregate. The runner therefore writes no aggregates and stubs no placeholder eval files. Only `full_v0` runs are ever eligible for aggregation; `tier0` / `tier1` artifacts are excluded by both their `interpretation` field and their separate path subtree.
+**Status: implemented (`train/matrix.py:aggregate_scientific_metrics`, `scripts/evaluate_runs.py --aggregate`).** Aggregation consumes `metrics_eval.json` (produced by `scripts/evaluate_runs.py` from `checkpoints/final.pt` only) and never stubs placeholder eval files. Only `full_v0` runs are ever eligible for aggregation; `tier0` / `tier1` artifacts are excluded by both their `interpretation` field and their separate path subtree (unless explicitly overridden for smoke testing).
 
 Per `EXPERIMENT_PLAN.md` §5: **report median + IQR**; bootstrap optional.
 
