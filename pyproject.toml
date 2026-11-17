@@ -18,6 +18,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "matplotlib>=3.11.2",
     "pytest",
 ]
 # Optional analysis extras. Not imported by world/, obs_codecs/, data/, model/, or train/.

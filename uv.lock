@@ -27,6 +27,7 @@ analysis = [
     { name = "scipy" },
 ]
 dev = [
+    { name = "matplotlib" },
     { name = "pytest" },
 ]
 
@@ -46,7 +47,10 @@ analysis = [
     { name = "matplotlib" },
     { name = "scipy" },
 ]
-dev = [{ name = "pytest" }]
+dev = [
+    { name = "matplotlib", specifier = ">=3.11.2" },
+    { name = "pytest" },
+]
 
 [[package]]
 name = "contourpy"
