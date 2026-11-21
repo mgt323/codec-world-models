@@ -268,16 +268,15 @@ def main(argv: list[str] | None = None) -> int:
         if not profile_name:
             raise SystemExit("--aggregate needs --budget-profile or a manifest")
         get_budget_profile(profile_name)
-        agg_commit = (
-            str(manifest["git_commit"])
-            if args.metrics_root is not None and manifest is not None and manifest.get("git_commit")
-            else commit
-        )
-        agg_dirty = (
-            bool(manifest.get("git_dirty", False))
-            if args.metrics_root is not None and manifest is not None
-            else dirty
-        )
+        # summary.json["git_commit"] / ["git_dirty"] always inherit the training
+        # manifest so eval/report.py can cross-check them; the commit that ran
+        # this evaluation is recorded separately as eval_git_commit / _dirty.
+        if manifest is not None and manifest.get("git_commit"):
+            agg_commit = str(manifest["git_commit"])
+            agg_dirty = bool(manifest.get("git_dirty", False))
+        else:
+            agg_commit = commit
+            agg_dirty = dirty
         written = aggregate_scientific_metrics(
             metrics_root,
             profile_name=profile_name,

@@ -319,7 +319,7 @@ def test_manifest_marks_pilot_as_plumbing_only(tmp_path: Path) -> None:
         smoke_max_steps=None,
     )
     assert manifest["interpretation"] == "plumbing_only"
-    assert manifest["eval_status"] == "pending_no_producer"
+    assert manifest["eval_status"] == "pending"
     assert manifest["budget_table"]["A"]["compute_matched"]["n_episodes"] == 200
 
     full_cells = expand_matrix(
@@ -461,7 +461,7 @@ def test_micro_matrix_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
             assert (run_dir / "metrics_train.jsonl").is_file()
             assert (run_dir / "reproducibility.json").is_file()
             assert (run_dir / "checkpoints" / "final.pt").is_file()
-            # No eval producer exists yet; must not be stubbed.
+            # Training must not stub eval output; scripts/evaluate_runs.py owns it.
             assert not (run_dir / "metrics_eval.json").exists()
             repro = json.loads((run_dir / "reproducibility.json").read_text("utf-8"))
             assert repro["budget_profile"] == "tier0"

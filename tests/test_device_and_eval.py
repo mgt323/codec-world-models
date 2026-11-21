@@ -225,6 +225,59 @@ def test_aggregate_scientific_metrics_writes_median_iqr_summaries(
     assert summary["metrics"]["next_state_mse"]["A"]["iqr"] == pytest.approx(0.2)
 
 
+def _write_metrics_eval(
+    runs_root: Path, *, n_reps: int, scoring_checkpoint: object = "final"
+) -> None:
+    import json
+
+    for rep in range(n_reps):
+        rep_dir = runs_root / "compute_matched" / "A" / f"rep{rep}"
+        rep_dir.mkdir(parents=True)
+        doc: dict = {"splits": {"val": {"next_state_mse": 0.1 * (rep + 1)}}}
+        if scoring_checkpoint is not None:
+            doc["scoring_checkpoint"] = scoring_checkpoint
+        (rep_dir / "metrics_eval.json").write_text(json.dumps(doc), encoding="utf-8")
+
+
+@pytest.mark.parametrize("bad_checkpoint", ["step_100", None])
+def test_aggregation_rejects_non_final_scoring_checkpoint(
+    tmp_path: Path, bad_checkpoint: object
+) -> None:
+    runs_root = tmp_path / "runs" / "full_v0"
+    _write_metrics_eval(runs_root, n_reps=3, scoring_checkpoint=bad_checkpoint)
+    with pytest.raises(ValueError, match="scoring_checkpoint must be 'final'"):
+        aggregate_scientific_metrics(
+            runs_root,
+            profile_name="full_v0",
+            output_root=tmp_path,
+            git_commit="abc",
+            git_dirty=False,
+        )
+    assert not (tmp_path / "runs" / "aggregates").exists()
+
+
+def test_aggregation_requires_three_replications_unless_pilot(tmp_path: Path) -> None:
+    runs_root = tmp_path / "runs" / "full_v0"
+    _write_metrics_eval(runs_root, n_reps=2)
+    with pytest.raises(ValueError, match="I14"):
+        aggregate_scientific_metrics(
+            runs_root,
+            profile_name="full_v0",
+            output_root=tmp_path,
+            git_commit="abc",
+            git_dirty=False,
+        )
+    written = aggregate_scientific_metrics(
+        runs_root,
+        profile_name="full_v0",
+        output_root=tmp_path,
+        git_commit="abc",
+        git_dirty=False,
+        allow_pilot=True,
+    )
+    assert len(written) == 1
+
+
 def test_argmax_predictions_multi_window_exact_shift() -> None:
     from eval.score import _argmax_predictions
     from model.architecture import CONTEXT_LENGTH_L

@@ -64,6 +64,10 @@ def test_single_run_smoke_writes_artifacts(tmp_path: Path) -> None:
     assert repro["shared_vocab_size"] == SHARED_VOCAB_SIZE
     assert repro["vocab_pad_policy"] == "shared_max_pad_48"
     assert repro["scoring_checkpoint"] == "final"
+    # loss_target_policy is a runtime knob logged here, deliberately not a RunConfig
+    # field (it would change config_sha256 of every locked run).
+    assert repro["loss_target_policy"] == "all_non_pad"
+    assert "loss_target_policy" not in config_disk
     assert repro["optimizer_steps"] == 2
     assert "git_commit" in repro
     assert isinstance(repro["git_dirty"], bool)
