@@ -122,6 +122,7 @@ Maximize entities + static attributes; **minimize eventive verbs**.
 ```text
 Entity A: value=0.41, status=present, label=source-like.
 Entity B: value=0.38, status=present, label=target-like.
+Context: noise=high, n_samples=3, source=sensor_a.
 Relation: A and B are similar.
 ```
 
@@ -136,7 +137,7 @@ Do **not** use captions like “Red ball hits blue box; box tips over” (too pr
 Explicit transitions and order:
 
 ```text
-(observe A↑) → (co-vary B↑) → (link A~B strength=med)
+(observe A=0.41) → (co-vary B=0.38) → (meta n=3 source=sensor_a noise=high)
 ```
 
 ### C — Evidential observational record (**no oracle p / causes**)
@@ -145,7 +146,7 @@ Do **not** feed simulator posteriors. Feed observation metadata; the model must 
 
 ```text
 obs: A=0.41, B=?
-source: sensor_A
+source: sensor_a
 n: 3
 noise: high
 alts: {common_cause, a_causes_b, b_causes_a, spurious}
@@ -160,7 +161,7 @@ Only then does ECE/Brier measure learned calibration rather than parroting a pro
 Control for “structure beats prose,” without philosophical framing:
 
 ```text
-A.x=0.41; A.obs=1; B.x=0.38; B.obs=1; noise=high; n=3
+A.x=0.41; A.obs=1; B.x=0.38; B.obs=1; noise=high; n=3; source=sensor_a
 ```
 
 If \(D \approx B \gg A\), the effect is mostly **structurality**, not process ontology.
@@ -238,9 +239,9 @@ Do **not** train a shared latent state head during stage 1 (it can force represe
 
 After training:
 
-1. Freeze model
-2. Extract activations on identical world states
-3. Train identical linear probes → hidden cause / regime / next \(O\) / etc.
+1. Freeze model (`checkpoints/final.pt`, gradients disabled)
+2. Extract final-layer hidden states at the last token of framed episode prefixes (`states[0..t]`) on identical world states
+3. Fit identical held-out ridge probes (`PROBE_RIDGE_ALPHA = 1.0`, deterministic episode-level 50/50 split with train-only feature standardization) → `hidden_c_r2`, `next_b_r2` (`state_{t+1}.b`), and `regime_accuracy` (ridge-to-one-hot + softmax)
 
 ---
 
@@ -256,6 +257,12 @@ All in observation/state/intervention space — not text aesthetics:
 6. **Partial-observability stress**
 7. **OOD regime** — new noise scales / graph priors
 8. **Cross-codec transfer** — after symbol alignment: zero/few-shot B→A inputs, A→B, train A+D test B, etc.
+
+**v0 implementation scope (`eval/score.py`):**
+
+- **Sample caps (shared identically across all codecs):** `EVAL_MAX_EPISODES = 64` (for `val` and `ood_partial_obs`), `PROBE_TRAIN_EPISODES = 128` (train episodes for the frozen eval regime probe), and `EVAL_SUITE_EPISODES = 32` (for `intervention` and `counterfactual` suites).
+- **Task 7 (`ood_regime_accuracy` & §2.1 curves):** Only `ood_partial_obs` (`partial_obs_rate=0.5`) is active in v0; `ood_noise`, `ood_confound`, and `ood_regime_switch` are deferred per `docs/PROGRAM_SPEC.md`, so `ood_regime_accuracy` is `null` and multi-point `noise_scale` curves (§2.1) are deferred for v0.
+- **Task 8 (`transfer_aligned_next_state_mse`):** Evaluates `A <-> B` zero-shot surface-token lookup in the checkpoint's own vocabulary only (`null` for `C`, `D`, and `E`; `train A+D test B` is not part of v0).
 
 ### Representation similarity (RSA)
 
@@ -290,7 +297,7 @@ Also interesting: **beh ≈, repr ≠** — different internal solutions, same b
 - Scale v0: enough episodes for clear separation (tens of thousands; scale up as needed)
 - Splits: train / val / OOD (new noise, layouts, graph priors)
 - Separate intervention and counterfactual suites
-- Storage: raw states in HDF5/zarr; codec strings tokenized offline or on the fly
+- Storage: raw states in HDF5 (`h5py`); encoded codec strings in Parquet (`pyarrow`), tokenized offline or on the fly (`zarr` is not used; see `docs/TECH_STACK.md`)
 - One-script generator + seed checksums
 
 ---
@@ -299,15 +306,17 @@ Also interesting: **beh ≈, repr ≠** — different internal solutions, same b
 
 ```text
 codec-world-models/
-  EXPERIMENT_PLAN.md
+  docs/           # EXPERIMENT_PLAN.md, PROGRAM_SPEC.md, COMPUTE_MATCH_BUDGETS.md, TRAINING_RUNNER_CONTRACT.md, INVARIANTS.md, TECH_STACK.md
   world/          # simulator, State/Obs schema, interventions
   obs_codecs/     # encode_A..E + info-equality tests (not stdlib codecs)
-  data/           # generate_episodes.py
+  data/           # generate_episodes.py, hdf5_episodes.py, encode_episodes.py
   model/          # identical transformer
-  train/          # single entrypoint + configs
-  eval/           # state-based benchmarks + transfer
-  probes/         # frozen linear probes + CKA/SVCCA
-  configs/        # differ only by codec / match_regime / seed
+  train/          # training loop, matrix expansion, config, packer
+  eval/           # state-based benchmarks, transfer, report bundle
+  probes/         # frozen linear probes + CKA/SVCCA/Procrustes
+  configs/        # dataset_v0 split specs (comparable runs differ only by codec / match_regime / seed)
+  scripts/        # CLI entrypoints for data, training, eval, probes, reporting
+  tests/          # pytest suite enforcing determinism, parity, leakage, and contracts
 ```
 
 Rule: **only** `codec`, `match_regime`, and `seed` differ across comparable runs. Locked `difficulty` (from §2.1 pilot) is shared within a comparison; vary it only when reporting difficulty curves.

@@ -45,7 +45,7 @@ codec-world-models/
 │   ├── diagnostics.py           # Locked regex_v4 provisional tokenizer and surface diagnostics
 │   ├── vocab.py                 # Train-only vocab builder (shared B-family vocab) and OOV reporter
 │   ├── parity_audit.py          # Reusable codec-agnostic parse(encode(O)) == F(O) auditor
-│   ├── token_rates_train_v4.json        # Authoritative full-train regex_v4 token rates for budget derivation
+│   ├── token_rates_train_v4.json        # Locked regex_v4 token rates (measured on 2,000-ep / 60,000-obs train prefix)
 │   ├── diagnostics_A.json               # regex_v4 single-codec diagnostic artifact (500-sample parity fixture)
 │   ├── diagnostics_comparison_ABCD.json # 500-sample surface comparison across codecs A, B, C, D
 │   └── diagnostics_comparison_B_E.json  # 500-sample surface comparison across B and E-transforms
@@ -73,9 +73,10 @@ codec-world-models/
 │   ├── score.py                 # Frozen fp32 scoring (passive splits, interventions, counterfactuals, eval_v2)
 │   └── difficulty_sweep_*.json  # Pre-computed difficulty sweep outputs used to lock DEFAULT_DIFFICULTY_V0
 ├── probes/
+│   ├── linear.py                # Fixed-alpha held-out ridge probes with episode-level split
 │   └── rsa.py                   # Linear CKA, SVCCA, and orthogonal Procrustes similarity metrics
 ├── scripts/                     # CLI entrypoints for dataset generation, encoding, audits, training, eval, probes, reporting
-└── tests/                       # 30 pytest suites enforcing determinism, parity, leakage, eval, and runner contracts
+└── tests/                       # 32 pytest suites enforcing determinism, parity, leakage, eval, and runner contracts
 ```
 
 ---
@@ -92,7 +93,7 @@ uv sync --group dev
 
 ### 2. Run the Test Suite
 
-Run the unit test suite (30 test files; 6 tests are marked `@pytest.mark.integration`. The 3 in `tests/test_packing_step_accounting.py` and `tests/test_real_a_document_masking_integration.py` auto-skip until `artifacts/encoded/train_A.parquet` and `artifacts/vocabs/vocab_A.json` are generated; the 3 CLI integration tests in `tests/test_matrix_runner.py` use their own setup, so see that file):
+Run the unit test suite (32 test files; 8 tests are marked `@pytest.mark.integration`: 3 in `tests/test_packing_step_accounting.py` and `tests/test_real_a_document_masking_integration.py` auto-skip until `artifacts/encoded/train_A.parquet` and `artifacts/vocabs/vocab_A.json` are generated, while the 5 CLI integration tests in `tests/test_matrix_runner.py` use self-contained stub fixtures and run without pre-existing `artifacts/`):
 
 ```bash
 uv run pytest
@@ -133,8 +134,8 @@ uv run python scripts/build_vocab.py \
   --out-dir artifacts/vocabs
 ```
 
-#### Step 3.4 — (Optional) Re-Verify Full-Train Token Rates & Codec Audits
-`obs_codecs/token_rates_train_v4.json` is already committed in the repository, but can be regenerated or cross-checked alongside the parity audits:
+#### Step 3.4 — (Optional) Re-Verify Locked Token Rates & Codec Audits
+`obs_codecs/token_rates_train_v4.json` is already committed in the repository (measured on the 2,000-episode / 60,000-observation `train` prefix under `regex_v4` and locked for budget derivation), and can be cross-checked alongside the parity audits:
 
 ```bash
 uv run python scripts/compute_token_rates_train.py --encoded-dir artifacts/encoded
@@ -158,25 +159,39 @@ uv run python scripts/verify_tier_artifacts.py tier1
 ```
 
 #### Step 3.6 — Generate Eval Splits, Score Runs & Aggregate (`metrics_eval.json` / `summary.json`)
-Generate the deterministic intervention and counterfactual evaluation splits, score `checkpoints/final.pt` in frozen `fp32` (`eval_v2`), and compute contract §5 median/IQR aggregates for `full_v0`:
+Generate the deterministic intervention and counterfactual evaluation splits, score `checkpoints/final.pt` in frozen `fp32` (`eval_v2`), and compute contract §5 median/IQR aggregates for `full_v0` (`--runs-root` and `--raw-dir` are required; `--eval-dir` and `--vocab-dir` default to `artifacts/eval_splits` and `artifacts/vocabs`):
 
 ```bash
 uv run python scripts/generate_eval_splits.py --out-dir artifacts/eval_splits
-uv run python scripts/evaluate_runs.py --budget-profile full_v0 --aggregate
+uv run python scripts/evaluate_runs.py \
+  --runs-root artifacts/runs/full_v0 \
+  --raw-dir artifacts/dataset_v0 \
+  --eval-dir artifacts/eval_splits \
+  --vocab-dir artifacts/vocabs \
+  --budget-profile full_v0 \
+  --aggregate
 ```
 
-#### Step 3.7 — Generate Scientific Report & Figures
-Render summary tables, scientific verdicts, and headless matplotlib figures from the aggregated `summary.json` outputs:
+#### Step 3.7 — Run Post-Hoc Frozen Linear Probes & RSA
+Extract frozen final-layer hidden states at the last token of framed episode prefixes (`states[0..t]`, preserving original `t`) over a shared world-state fixture, fit held-out ridge probes (`PROBE_RIDGE_ALPHA = 1.0`, deterministic episode-level 50/50 split with train-only standardization) for `hidden_c_r2`, `next_b_r2` (`state_{t+1}.b`), and `regime_accuracy` (ridge-to-one-hot + softmax), and compute CKA, SVCCA, and orthogonal Procrustes similarities. Run *before* `scripts/summarize_results.py`, writing to `artifacts/probes/full_v0/{regime}/rep{r}/probes.json`:
+
+```bash
+# Matrix mode (probes every match_regime x replication cell into artifacts/probes/full_v0/{regime}/rep{r}/probes.json)
+uv run python scripts/run_probes.py \
+  --runs-root artifacts/runs/full_v0 \
+  --raw-dir artifacts/dataset_v0 \
+  --vocab-dir artifacts/vocabs \
+  --budget-profile full_v0 \
+  --matrix
+```
+
+To probe a single cell instead of `--matrix`, pass `--match-regime`, `--replication`, and `--out-dir artifacts/probes/full_v0/{regime}/rep{r}` explicitly across both match regimes and all replications (`rep0`..`rep{R-1}`).
+
+#### Step 3.8 — Generate Scientific Report & Figures
+Render summary tables, scientific verdicts, and headless matplotlib figures from the aggregated `summary.json` outputs (`artifacts/runs/aggregates`), `probes.json` (`artifacts/probes/full_v0`), and `manifest.json` (`artifacts/runs/full_v0/manifest.json`):
 
 ```bash
 uv run python scripts/summarize_results.py
-```
-
-#### Step 3.8 — Run Post-Hoc Frozen Linear Probes & RSA
-Extract frozen layer activations over a shared world-state fixture and compute ridge/logistic probes plus CKA, SVCCA, and orthogonal Procrustes similarities:
-
-```bash
-uv run python scripts/run_probes.py --budget-profile full_v0
 ```
 
 ### 4. Deferred / Optional Items

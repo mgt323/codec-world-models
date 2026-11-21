@@ -202,8 +202,10 @@ DEFAULT_DIFFICULTY_V0 = Difficulty(
   0.0–0.2; mild dip to 22/25 at 0.3). Keep 0.0 as the default; no need to
   raise confound for separability under the current O-only rule.
 - **`partial_obs_rate=0.2`:** chosen from a difficulty sweep at fixed
-  `noise_scale=0.15`: directional-regime recall stays ~0.70-0.72 through
-  rate 0.3, degrading only at rate 0.5 (~0.61, more `a_causes_b`→spurious
+  `noise_scale=0.15`: overall 4-class `heuristic_regime_accuracy` stays
+  ~0.70–0.72 through rate 0.3 (with directional recall `(a_causes_b +
+  b_causes_a)/50` at 0.96 at rate 0.2 and 0.92 at rate 0.3), degrading at
+  rate 0.5 to 0.61 (directional recall 0.72, more `a_causes_b`→spurious
   confusion). 0.2 preserves full heuristic accuracy while giving
   eval task #6 (partial-observability stress) a non-trivial fraction
   (~19%) of under-observed timesteps during training.

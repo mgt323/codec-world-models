@@ -1,7 +1,6 @@
-# Training matrix runner contract (design draft)
+# Training matrix runner contract (locked / implemented)
 
-**Status:** design only — entrypoint spec for future `scripts/run_training_matrix.py`  
-(to be implemented alongside `model/` / `train/`).  
+**Status:** locked and implemented in `train/` and `scripts/run_training_matrix.py`.  
 **Consumes:** `COMPUTE_MATCH_BUDGETS.md` (locked \(T\), floor, resampling, masking).  
 **Plan:** `EXPERIMENT_PLAN.md` §5 — 3–5 replications; report **median + IQR** (bootstrap optional).  
 **Config discipline:** comparable cells differ only by `codec`, `match_regime`, and replication seeds (shared locked difficulty, architecture, \(L\), tokenizer).
@@ -73,10 +72,9 @@ At `pool_episodes = 50000` the derivation reproduces the §1/§2 tables exactly;
 | `document_masking` | `bool` | `true` (locked) |
 | `boundary_markers` | `bool` | `true` — insert `<bos>`/`<eos>` at episode boundaries |
 | `mask_source` | `str` | `segment_ids` (explicit array; not token-scan) |
-| `loss_target_policy` | `str` | `all_non_pad` (locked) — cross-segment boundary targets are scored; measured residual in `COMPUTE_MATCH_BUDGETS.md` §4 item 4. Logged on every run. |
 | `reshuffle_policy` | `str` | `reshuffle_per_epoch` (not with-replacement) |
-| `difficulty` | object / id | locked `DEFAULT_DIFFICULTY_V0` (train/val); OOD eval uses its own split |
-| `dataset_split_train` | `str` | path / id for train HDF5 + encoded parquet |
+| `difficulty` | `str` | locked `DEFAULT_DIFFICULTY_V0` (train/val); OOD eval uses its own split |
+| `dataset_split_train` | `str` | path / id for train encoded parquet (`artifacts/encoded/train_{codec}.parquet`) |
 | `architecture_id` | `str` | shared model family / depth / width hash |
 | `optimizer_id` | `str` | shared optimizer + schedule family |
 
@@ -89,7 +87,8 @@ Per `.cursor/rules/02-reproducibility` and `PROGRAM_SPEC` §5:
 - full config dump plus `config_sha256` (SHA-256 over the sorted config dump; wall-clock is not a config field, so it is excluded by construction) — also the resume identity key (§4.5)
 - `budget_profile`
 - `harness_step_cap` — `null` for a full-budget run; an integer marks a step-capped smoke run whose `tokens_consumed` is below `T_eff`
-- `dataset_checksum` — SHA-256 of the encoded train parquet — plus `episode_pool_source`, `episode_pool_size`, and `episode_pool_fingerprint` (digest of the tokenized pool actually consumed). The fingerprint is required because the matrix runner injects a cached, possibly truncated pool; the file checksum alone would not pin what the run trained on.
+- `loss_target_policy` — `all_non_pad` for all scientific runs (`within_segment` is available only via the diagnostic `restrict_loss_to_segment` keyword argument in `train/loop.py`). Intentionally excluded from `RunConfig` so `config_sha256` of locked runs is unchanged; measured residual in `COMPUTE_MATCH_BUDGETS.md` §4 item 4.
+- `dataset_checksum` — SHA-256 of the encoded train parquet — plus `dataset_base_seed` (`BASE_SEED_TRAIN`), `schema_version` (`world.schema.SCHEMA_VERSION`), `episode_pool_source`, `episode_pool_size`, and `episode_pool_fingerprint` (digest of the tokenized pool actually consumed). The fingerprint is required because the matrix runner injects a cached, possibly truncated pool; the file checksum alone would not pin what the run trained on.
 - `model_param_count`
 - `tokens_consumed` / `optimizer_steps` / FLOPs estimate (token-updates proxy under fixed \(L\))
 - `codec`, `match_regime`, `replication_id`, both seeds
@@ -106,18 +105,25 @@ Per `.cursor/rules/02-reproducibility` and `PROGRAM_SPEC` §5:
   "data_shuffle_seed": 2000002,
   "n_episodes": 78770,
   "T_eff": 108437932.8,
-  "T_target": 108438000,
+  "T_target": 108438000.0,
   "budget_profile": "full_v0",
   "avg_tokens_per_observation": 45.888,
   "n_steps": 30,
   "token_rate_artifact": "obs_codecs/token_rates_train_v4.json",
   "tokenization_scheme_version": "regex_v4",
+  "vocab_policy": "train_only_b_family_shared",
+  "context_length_L": 1024,
   "document_masking": true,
+  "boundary_markers": true,
   "mask_source": "segment_ids",
   "reshuffle_policy": "reshuffle_per_epoch",
-  "context_length_L": 1024,
+  "difficulty": "DEFAULT_DIFFICULTY_V0",
+  "dataset_split_train": "artifacts/encoded/train_B.parquet",
   "architecture_id": "dec_only_v0_L1024_d384_l6_h6_ff1536_vpad48",
-  "optimizer_id": "adamw_v0_lr3e4_wd0.1_bs8"
+  "optimizer_id": "adamw_v0_lr3e4_wd0.1_bs8",
+  "scoring_checkpoint": "final",
+  "early_stopping": false,
+  "best_checkpoint_selection": false
 }
 ```
 
@@ -202,28 +208,50 @@ artifacts/runs/{budget_profile}/{match_regime}/{codec}/rep{r}/
 
 The `{budget_profile}` segment (`tier0` / `tier1` / `full_v0`) keeps pilot artifacts physically separate from scientific ones, so a pilot run can never be swept into aggregation by a path glob. `metrics_eval.json` is produced post-training by `scripts/evaluate_runs.py` from `checkpoints/final.pt` only — it is never stubbed with placeholder values.
 
-#### 4.3.1 `metrics_eval.json` schema (keyed by eval split)
+#### 4.3.1 `metrics_eval.json` schema (keyed under `"splits"`)
 
-Scoring metrics are **nested by eval split**, never flat at the top level. Active v0 splits at minimum: `val`, `ood_partial_obs` (add further `ood_*` keys when those splits unlock).
+Scoring metrics are **nested by eval split under `"splits"`**, alongside top-level provenance and evaluation protocol metadata. Active v0 splits: `val`, `ood_partial_obs`, `intervention`, `counterfactual` (every split carries all 11 `METRIC_KEYS` from `eval/metrics.py`, using `null` where a task does not apply).
 
 ```json
 {
-  "val": {
-    "next_state_mse": 0.0,
-    "regime_accuracy": 0.0,
-    "intervention_accuracy": 0.0,
-    "calibration_ece": 0.0
+  "eval_schema_version": "eval_v2",
+  "decoder_mode": "skeleton",
+  "git_commit": "<eval_commit>",
+  "git_dirty": false,
+  "device_type": "cuda",
+  "precision": "fp32",
+  "scoring_checkpoint": "final",
+  "codec": "B",
+  "protocol": {
+    "eval_schema_version": "eval_v2",
+    "decoder_mode": "skeleton",
+    "eval_max_episodes": 64,
+    "probe_train_episodes": 128,
+    "eval_suite_episodes": 32,
+    "precision": "fp32"
   },
-  "ood_partial_obs": {
-    "next_state_mse": 0.0,
-    "regime_accuracy": 0.0,
-    "intervention_accuracy": 0.0,
-    "calibration_ece": 0.0
+  "splits": {
+    "val": {
+      "next_state_mse": 0.0,
+      "regime_accuracy": 0.0,
+      "intervention_accuracy": null,
+      "calibration_ece": 0.0,
+      "calibration_brier": 0.0,
+      "counterfactual_divergence_mse": null,
+      "partial_obs_next_state_mse": null,
+      "ood_regime_accuracy": null,
+      "transfer_aligned_next_state_mse": 0.0,
+      "next_state_parse_rate": 0.0,
+      "parse_fail_rate": null
+    },
+    "ood_partial_obs": { "...": "all 11 METRIC_KEYS" },
+    "intervention": { "...": "all 11 METRIC_KEYS" },
+    "counterfactual": { "...": "all 11 METRIC_KEYS" }
   }
 }
 ```
 
-Metric key set follows `EXPERIMENT_PLAN.md` eval tasks (names may grow; every key present under one split should be present under all reported splits for that run, using `null` only if a task is explicitly inapplicable). All values are from the **final** checkpoint (§2.6).
+All values are from the **final** checkpoint in frozen `fp32` (§2.6).
 
 ### 4.4 Entrypoint responsibilities
 
@@ -283,22 +311,30 @@ artifacts/runs/aggregates/{match_regime}/{eval_split}/summary.json
 
 Examples: `.../compute_matched/val/summary.json`, `.../info_matched/ood_partial_obs/summary.json`.
 
-Schema sketch:
+Schema sketch (`git_commit` / `git_dirty` inherit the training `manifest.json`; `eval_git_commit` / `eval_git_dirty` record the commit that executed `scripts/evaluate_runs.py`):
 
 ```json
 {
   "match_regime": "compute_matched",
   "eval_split": "val",
+  "budget_profile": "full_v0",
   "n_replications": 5,
   "aggregation": "median_iqr",
+  "percentile_method": "linear",
+  "git_commit": "<training_manifest_commit>",
+  "git_dirty": false,
+  "eval_schema_version": "eval_v2",
+  "decoder_mode": "skeleton",
+  "eval_git_commit": "<eval_commit>",
+  "eval_git_dirty": false,
   "metrics": {
     "next_state_mse": {
-      "A": {"median": 0.0, "q1": 0.0, "q3": 0.0, "values": []},
-      "B": {"median": 0.0, "q1": 0.0, "q3": 0.0, "values": []}
+      "A": {"median": 0.0, "q1": 0.0, "q3": 0.0, "iqr": 0.0, "values": []},
+      "B": {"median": 0.0, "q1": 0.0, "q3": 0.0, "iqr": 0.0, "values": []}
     },
     "regime_accuracy": {
-      "A": {"median": 0.0, "q1": 0.0, "q3": 0.0, "values": []},
-      "B": {"median": 0.0, "q1": 0.0, "q3": 0.0, "values": []}
+      "A": {"median": 0.0, "q1": 0.0, "q3": 0.0, "iqr": 0.0, "values": []},
+      "B": {"median": 0.0, "q1": 0.0, "q3": 0.0, "iqr": 0.0, "values": []}
     }
   }
 }
