@@ -188,7 +188,14 @@ _SCHEMA_FIELDS = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class RunConfig:
-    """Single-run config; fields mirror docs/TRAINING_RUNNER_CONTRACT.md §2."""
+    """Single-run config; fields mirror docs/TRAINING_RUNNER_CONTRACT.md §2.
+
+    ``loss_target_policy`` is intentionally **not** a field. The scientific
+    policy is the locked ``all_non_pad``; ``run_training`` can switch to
+    ``within_segment`` only through a diagnostic keyword argument, and the
+    policy actually used is logged in ``reproducibility.json``. Adding it here
+    would change ``config_sha256`` for every existing run.
+    """
 
     codec: str
     match_regime: str

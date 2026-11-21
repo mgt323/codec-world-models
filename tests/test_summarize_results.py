@@ -335,6 +335,54 @@ def test_provenance_guard_rejects_missing_git_commit(tmp_path: Path) -> None:
         load_report_bundle(agg_dir, probes_dir, manifest_path)
 
 
+def _tag_executor_commits(
+    tmp_path: Path, *, eval_commit: str, probe_commit: str, summary_eval_commit: str | None = None
+) -> None:
+    for path in (tmp_path / "aggregates").glob("*/*/summary.json"):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["eval_git_commit"] = summary_eval_commit or eval_commit
+        payload["eval_git_dirty"] = True
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    for path in (tmp_path / "probes").glob("*/*/probes.json"):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["probe_git_commit"] = probe_commit
+        payload["probe_git_dirty"] = True
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_executor_commits_may_differ_from_training_commit(tmp_path: Path) -> None:
+    agg_dir, probes_dir, manifest_path = _write_synthetic_artifacts(tmp_path)
+    _tag_executor_commits(tmp_path, eval_commit="eval999", probe_commit="probe888")
+    bundle = load_report_bundle(agg_dir, probes_dir, manifest_path)
+    assert bundle.provenance["git_commit"] == "abc123def456"
+    assert bundle.provenance["eval_git_commit"] == "eval999"
+    assert bundle.provenance["probe_git_commits"] == ["probe888"]
+    summary = format_verdict_summary(bundle)
+    assert "eval_git_commit=eval999" in summary
+    assert "probe_git_commit=probe888" in summary
+
+
+def test_training_commit_mismatch_in_probes_still_rejected(tmp_path: Path) -> None:
+    agg_dir, probes_dir, manifest_path = _write_synthetic_artifacts(tmp_path)
+    probe_file = probes_dir / "compute_matched" / "rep0" / "probes.json"
+    payload = json.loads(probe_file.read_text(encoding="utf-8"))
+    payload["git_commit"] = "someothercommit"
+    probe_file.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="git_commit mismatch"):
+        load_report_bundle(agg_dir, probes_dir, manifest_path)
+
+
+def test_inconsistent_eval_git_commit_across_summaries_rejected(tmp_path: Path) -> None:
+    agg_dir, probes_dir, manifest_path = _write_synthetic_artifacts(tmp_path)
+    _tag_executor_commits(tmp_path, eval_commit="eval1", probe_commit="p")
+    odd = agg_dir / "compute_matched" / "val" / "summary.json"
+    payload = json.loads(odd.read_text(encoding="utf-8"))
+    payload["eval_git_commit"] = "eval2"
+    odd.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="eval_git_commit differs"):
+        load_report_bundle(agg_dir, probes_dir, manifest_path)
+
+
 def test_summarize_results_cli_renders_tables_and_three_figures_headless(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

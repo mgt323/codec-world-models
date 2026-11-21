@@ -52,6 +52,32 @@ def _load_script():
     return module
 
 
+def _write_stub_vocab(vocab_dir: Path, codecs: tuple[str, ...]) -> None:
+    """Minimal vocab JSON so preflight does not read artifacts/vocabs."""
+    from obs_codecs.vocab import SPECIAL_TOKENS, artifact_from_token_to_id, save_vocab
+
+    vocab_dir.mkdir(parents=True, exist_ok=True)
+    token_to_id = {token: index for index, token in enumerate((*SPECIAL_TOKENS, "alpha"))}
+    artifact = artifact_from_token_to_id(
+        token_to_id,
+        metadata={"purpose": "matrix-runner integration fixture"},
+    )
+    groups = {"B" if codec.startswith("B") else codec for codec in codecs}
+    for group in sorted(groups):
+        save_vocab(artifact, vocab_dir / f"vocab_{group}.json")
+
+
+def _stub_matrix_inputs(root: Path, codecs: tuple[str, ...]) -> tuple[Path, Path]:
+    """Vocab JSON plus placeholder parquets. Content is unused when loading is patched."""
+    encoded_dir = root / "encoded"
+    vocab_dir = root / "vocabs"
+    encoded_dir.mkdir(parents=True, exist_ok=True)
+    _write_stub_vocab(vocab_dir, codecs)
+    for codec in codecs:
+        (encoded_dir / f"train_{codec}.parquet").write_bytes(b"")
+    return encoded_dir, vocab_dir
+
+
 # docs/COMPUTE_MATCH_BUDGETS.md §1 / §2 tables, transcribed as the drift reference.
 _LOCKED_FULL_V0 = {
     "A": {"cm_n": 50_000, "cm_t": 108_438_000.0, "im_t": 108_438_000.0},
@@ -319,7 +345,7 @@ def test_manifest_marks_pilot_as_plumbing_only(tmp_path: Path) -> None:
         smoke_max_steps=None,
     )
     assert manifest["interpretation"] == "plumbing_only"
-    assert manifest["eval_status"] == "pending_no_producer"
+    assert manifest["eval_status"] == "pending"
     assert manifest["budget_table"]["A"]["compute_matched"]["n_episodes"] == 200
 
     full_cells = expand_matrix(
@@ -421,6 +447,7 @@ def test_pool_guard_aborts_when_corpus_too_small(
         output_root=tmp_path,
         runs_subdir="tier1",
     )
+    encoded_dir, vocab_dir = _stub_matrix_inputs(tmp_path / "corpus", ("A",))
     monkeypatch.setattr(
         script, "episodes_from_parquet", lambda *a, **k: [[4, 5]] * 10
     )
@@ -428,7 +455,8 @@ def test_pool_guard_aborts_when_corpus_too_small(
         script._preflight(
             cells,
             profile,
-            vocab_dir=_ROOT / "artifacts" / "vocabs",
+            vocab_dir=vocab_dir,
+            encoded_dir=encoded_dir,
             batch_size=8,
         )
     assert not (tmp_path / "runs").exists()
@@ -442,6 +470,7 @@ def test_micro_matrix_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
     tiny_pool = [[4 + (i % 20)] * 60 for i in range(profile.pool_episodes)]
     monkeypatch.setattr(script, "episodes_from_parquet", lambda *a, **k: tiny_pool)
+    encoded_dir, vocab_dir = _stub_matrix_inputs(tmp_path / "corpus", ("A", "B"))
 
     rc = script.main(
         [
@@ -449,6 +478,8 @@ def test_micro_matrix_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
             "--codecs", "A", "B",
             "--replications", "1",
             "--output-root", str(tmp_path),
+            "--encoded-dir", str(encoded_dir),
+            "--vocab-dir", str(vocab_dir),
             "--smoke-max-steps", "1",
         ]
     )
@@ -461,7 +492,7 @@ def test_micro_matrix_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
             assert (run_dir / "metrics_train.jsonl").is_file()
             assert (run_dir / "reproducibility.json").is_file()
             assert (run_dir / "checkpoints" / "final.pt").is_file()
-            # No eval producer exists yet; must not be stubbed.
+            # Training must not stub eval output; scripts/evaluate_runs.py owns it.
             assert not (run_dir / "metrics_eval.json").exists()
             repro = json.loads((run_dir / "reproducibility.json").read_text("utf-8"))
             assert repro["budget_profile"] == "tier0"
@@ -497,12 +528,15 @@ def test_micro_matrix_resume_skips_completed(
     profile = get_budget_profile("tier0")
     tiny_pool = [[4 + (i % 20)] * 60 for i in range(profile.pool_episodes)]
     monkeypatch.setattr(script, "episodes_from_parquet", lambda *a, **k: tiny_pool)
+    encoded_dir, vocab_dir = _stub_matrix_inputs(tmp_path / "corpus", ("A",))
 
     argv = [
         "--tier", "0",
         "--codecs", "A",
         "--replications", "1",
         "--output-root", str(tmp_path),
+        "--encoded-dir", str(encoded_dir),
+        "--vocab-dir", str(vocab_dir),
         "--smoke-max-steps", "1",
     ]
     assert script.main(argv) == 0
@@ -521,12 +555,15 @@ def test_manifest_refuses_mixed_precision_resume(
     profile = get_budget_profile("tier0")
     tiny_pool = [[4 + (i % 20)] * 60 for i in range(profile.pool_episodes)]
     monkeypatch.setattr(script, "episodes_from_parquet", lambda *a, **k: tiny_pool)
+    encoded_dir, vocab_dir = _stub_matrix_inputs(tmp_path / "corpus", ("A",))
 
     argv_fp32 = [
         "--tier", "0",
         "--codecs", "A",
         "--replications", "1",
         "--output-root", str(tmp_path),
+        "--encoded-dir", str(encoded_dir),
+        "--vocab-dir", str(vocab_dir),
         "--smoke-max-steps", "1",
         "--precision", "fp32",
     ]
@@ -546,8 +583,6 @@ def test_manifest_refuses_mixed_precision_resume(
 def test_matrix_runner_propagates_encoded_dir_and_vocab_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import shutil
-
     import pandas as pd
 
     script = _load_script()
@@ -555,12 +590,8 @@ def test_matrix_runner_propagates_encoded_dir_and_vocab_dir(
     enc_dir = tmp_path / "custom_encoded"
     vocab_dir = tmp_path / "custom_vocabs"
     enc_dir.mkdir()
-    vocab_dir.mkdir()
-    shutil.copy2(_ROOT / "artifacts" / "vocabs" / "vocab_A.json", vocab_dir / "vocab_A.json")
-
-    vocab = json.loads((vocab_dir / "vocab_A.json").read_text(encoding="utf-8"))
-    toks = [k for k in vocab["token_to_id"] if not k.startswith("<")]
-    sample_str = " ".join(toks[:3])
+    _write_stub_vocab(vocab_dir, ("A",))
+    sample_str = "alpha"
     rows = [
         {"episode_seed": ep, "timestep": 0, "encoded_string": sample_str}
         for ep in range(profile.pool_episodes + 5)

@@ -8,8 +8,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from configs.dataset_v0 import BASE_SEED_TRAIN
 from model.architecture import SHARED_VOCAB_SIZE
 from train.config import build_run_config, get_budget_profile, validate_run_config
+from world.schema import SCHEMA_VERSION
 from train.data import load_codec_vocab, synthetic_episodes
 from train.loop import run_training
 
@@ -64,6 +66,14 @@ def test_single_run_smoke_writes_artifacts(tmp_path: Path) -> None:
     assert repro["shared_vocab_size"] == SHARED_VOCAB_SIZE
     assert repro["vocab_pad_policy"] == "shared_max_pad_48"
     assert repro["scoring_checkpoint"] == "final"
+    # loss_target_policy is a runtime knob logged here, deliberately not a RunConfig
+    # field (it would change config_sha256 of every locked run).
+    assert repro["loss_target_policy"] == "all_non_pad"
+    assert "loss_target_policy" not in config_disk
+    assert repro["dataset_base_seed"] == BASE_SEED_TRAIN
+    assert repro["schema_version"] == SCHEMA_VERSION
+    assert "dataset_base_seed" not in config_disk
+    assert "schema_version" not in config_disk
     assert repro["optimizer_steps"] == 2
     assert "git_commit" in repro
     assert isinstance(repro["git_dirty"], bool)

@@ -5,7 +5,7 @@ spurious is expected to be near-chance-separable from a single
 episode by World v0 design (see identifiability note below); this
 is a known ceiling, not a bug in this module or in simulate.py.
 
-Identifiability note (test4.py / test5.py):
+Identifiability note:
 ``hidden_c`` is drawn once per episode and held fixed, so within-episode
 corr(A, B) and var(A)/var(B) cannot separate COMMON_CAUSE from SPURIOUS.
 Across-episode corr of episode means does separate them, but that signal
@@ -110,7 +110,7 @@ def predict_regime_heuristic(episode: Episode) -> CausalRegime:
                 return CausalRegime.B_CAUSES_A
         # Ambiguous: corr present but ratio near 1 → fall through to Step 2b.
 
-    # Step 2b — World v0 identifiability ceiling (test4.py / test5.py):
+    # Step 2b — World v0 identifiability ceiling:
     # within-episode corr≈0 and ratio≈1 for BOTH common_cause and spurious.
     # Always predict SPURIOUS so common_cause recall ≈ 0 in the confusion
     # matrix (visible ceiling). Do not "fix" without revisiting the design.

@@ -39,14 +39,24 @@ OOD_PARTIAL_OBS_DIFFICULTY: Final[Difficulty] = replace(
 # headroom well beyond dry-run and §9 "tens of thousands" scales so ranges
 # never collide when n_episodes stays below that gap.
 #
-#   train:           [1_000_000, 1_000_000 + n)
-#   val:             [2_000_000, 2_000_000 + n)
-#   ood_partial_obs: [3_000_000, 3_000_000 + n)
-#   ood_noise:       [4_000_000, ...)  reserved when unlocked
+#   train:              [1_000_000, 1_000_000 + n)
+#   val:                [2_000_000, 2_000_000 + n)
+#   ood_partial_obs:    [3_000_000, 3_000_000 + n)
+#   ood_noise:          [4_000_000, ...)  reserved when unlocked
+#   intervention eval:  [5_000_000, ...)  eval.score.INTERVENTION_BASE_SEED
+#   counterfactual eval:[6_000_000, ...)  eval.score.COUNTERFACTUAL_BASE_SEED
+#   probe fallback:     [7_000_000, ...)  scripts/run_probes.FALLBACK_SEED_BASE
+#   ood_confound:       [8_000_000, ...)  reserved when unlocked
+#   ood_regime_switch:  [9_000_000, ...)  reserved when unlocked
+#
+# 5_000_000–7_000_000 are already occupied by eval and probe suites, so the
+# deferred OOD inventory continues at 8_000_000 rather than colliding with them.
 BASE_SEED_TRAIN: Final[int] = 1_000_000
 BASE_SEED_VAL: Final[int] = 2_000_000
 BASE_SEED_OOD_PARTIAL_OBS: Final[int] = 3_000_000
 BASE_SEED_OOD_NOISE_RESERVED: Final[int] = 4_000_000
+BASE_SEED_OOD_CONFOUND_RESERVED: Final[int] = 8_000_000
+BASE_SEED_OOD_REGIME_SWITCH_RESERVED: Final[int] = 9_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +98,20 @@ SPLIT_SPECS: Final[tuple[SplitSpec, ...]] = (
         difficulty=None,
         base_seed=BASE_SEED_OOD_NOISE_RESERVED,
         note="PROGRAM_SPEC: no locked OOD noise_scale yet - do not generate",
+    ),
+    SplitSpec(
+        name="ood_confound",
+        status="deferred",
+        difficulty=None,
+        base_seed=BASE_SEED_OOD_CONFOUND_RESERVED,
+        note="PROGRAM_SPEC: no locked OOD confounding_strength yet - do not generate",
+    ),
+    SplitSpec(
+        name="ood_regime_switch",
+        status="deferred",
+        difficulty=None,
+        base_seed=BASE_SEED_OOD_REGIME_SWITCH_RESERVED,
+        note="PROGRAM_SPEC: regime_switch_rate > 0 is not implemented - do not generate",
     ),
 )
 

@@ -11,7 +11,7 @@ import json
 import math
 from pathlib import Path
 import re
-from typing import Any, Sequence
+from typing import Any, NamedTuple, Sequence
 
 import numpy as np
 
@@ -113,6 +113,41 @@ def _require_git_commit(payload: dict[str, Any], source: Path) -> str:
     return commit.strip()
 
 
+class ProvenanceEntry(NamedTuple):
+    """Per-artifact provenance.
+
+    ``commit`` / ``dirty`` are the *training* commit inherited from the manifest
+    and are cross-checked against it. ``executor_commit`` / ``executor_dirty``
+    record the commit that ran the evaluation (``eval_git_commit``) or probes
+    (``probe_git_commit``); they may legitimately differ from the training
+    commit and are reported, not matched.
+    """
+
+    path: Path
+    commit: str
+    dirty: bool | None
+    executor_commit: str | None = None
+    executor_dirty: bool | None = None
+
+
+def _optional_commit(payload: dict[str, Any], key: str, source: Path) -> str | None:
+    if key not in payload:
+        return None
+    value = payload[key]
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Empty or non-string {key} in {source} (Invariant I13)")
+    return value.strip()
+
+
+def _optional_dirty(payload: dict[str, Any], key: str, source: Path) -> bool | None:
+    if key not in payload:
+        return None
+    value = payload[key]
+    if not isinstance(value, bool):
+        raise ValueError(f"Expected boolean {key} in {source}, got {value!r}")
+    return value
+
+
 def _extract_git_dirty(payload: dict[str, Any], source: Path) -> bool | None:
     if "git_dirty" not in payload:
         return None
@@ -207,11 +242,11 @@ def _load_eval_aggregates_with_provenance(
     aggregates_dir: Path,
 ) -> tuple[
     dict[tuple[str, str], dict[str, dict[str, MetricStats]]],
-    list[tuple[Path, str, bool | None]],
+    list[ProvenanceEntry],
     int,
 ]:
     summaries: dict[tuple[str, str], dict[str, dict[str, MetricStats]]] = {}
-    provenance_entries: list[tuple[Path, str, bool | None]] = []
+    provenance_entries: list[ProvenanceEntry] = []
     expected_n_reps: int | None = None
 
     for regime in MATCH_REGIMES:
@@ -222,7 +257,15 @@ def _load_eval_aggregates_with_provenance(
             payload = json.loads(summary_path.read_text(encoding="utf-8"))
             commit = _require_git_commit(payload, summary_path)
             dirty = _extract_git_dirty(payload, summary_path)
-            provenance_entries.append((summary_path, commit, dirty))
+            provenance_entries.append(
+                ProvenanceEntry(
+                    summary_path,
+                    commit,
+                    dirty,
+                    _optional_commit(payload, "eval_git_commit", summary_path),
+                    _optional_dirty(payload, "eval_git_dirty", summary_path),
+                )
+            )
 
             metrics_raw = payload.get("metrics")
             if not isinstance(metrics_raw, dict):
@@ -286,10 +329,10 @@ def load_eval_aggregates(
 def _load_and_aggregate_probes_with_provenance(
     probes_dir: Path,
     codecs: Sequence[str] = REPORT_CODECS,
-) -> tuple[dict[str, RegimeProbeAggregate], list[tuple[Path, str, bool | None]]]:
+) -> tuple[dict[str, RegimeProbeAggregate], list[ProvenanceEntry]]:
     codec_list = tuple(codecs)
     aggregates: dict[str, RegimeProbeAggregate] = {}
-    provenance_entries: list[tuple[Path, str, bool | None]] = []
+    provenance_entries: list[ProvenanceEntry] = []
     expected_n_reps: int | None = None
 
     for regime in MATCH_REGIMES:
@@ -328,7 +371,15 @@ def _load_and_aggregate_probes_with_provenance(
             payload = json.loads(probe_file.read_text(encoding="utf-8"))
             commit = _require_git_commit(payload, probe_file)
             dirty = _extract_git_dirty(payload, probe_file)
-            provenance_entries.append((probe_file, commit, dirty))
+            provenance_entries.append(
+                ProvenanceEntry(
+                    probe_file,
+                    commit,
+                    dirty,
+                    _optional_commit(payload, "probe_git_commit", probe_file),
+                    _optional_dirty(payload, "probe_git_dirty", probe_file),
+                )
+            )
             rep_payloads.append((probe_file, payload))
 
         for probe_file, payload in rep_payloads:
@@ -415,6 +466,7 @@ def load_manifest_compute_stats(
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     git_commit = _require_git_commit(payload, manifest_path)
     git_dirty_explicit = _extract_git_dirty(payload, manifest_path)
+    eval_git_commit = _optional_commit(payload, "eval_git_commit", manifest_path)
 
     n_replications = int(payload.get("n_replications", 0))
     if n_replications < 3:
@@ -478,6 +530,7 @@ def load_manifest_compute_stats(
         "git_dirty": bool(git_dirty_explicit) if git_dirty_explicit is not None else False,
         "git_dirty_explicit": git_dirty_explicit,
         "n_replications": n_replications,
+        "eval_git_commit": eval_git_commit,
         "eval_status": payload.get("eval_status"),
         "eval_schema_version": payload.get("eval_schema_version"),
         "decoder_mode": payload.get("decoder_mode"),
@@ -488,15 +541,37 @@ def load_manifest_compute_stats(
 def _validate_cross_artifact_provenance(
     manifest_path: Path,
     manifest_provenance: dict[str, Any],
-    summary_entries: list[tuple[Path, str, bool | None]],
-    probe_entries: list[tuple[Path, str, bool | None]],
+    summary_entries: list[ProvenanceEntry],
+    probe_entries: list[ProvenanceEntry],
 ) -> None:
+    """Training commit/dirty in every artifact must equal the manifest's.
+
+    ``eval_git_commit`` (summaries) and ``probe_git_commit`` (probes) are not
+    matched against the training commit: evaluation and probing may run after
+    later commits. Evaluation provenance must still be self-consistent: all
+    summaries (and the manifest, when it records one) share one
+    ``eval_git_commit``.
+    """
     manifest_commit = manifest_provenance["git_commit"]
     manifest_dirty = manifest_provenance["git_dirty"]
     all_entries = summary_entries + probe_entries
 
+    eval_commits = {
+        e.executor_commit for e in summary_entries if e.executor_commit is not None
+    }
+    manifest_eval_commit = manifest_provenance.get("eval_git_commit")
+    if manifest_eval_commit is not None:
+        eval_commits.add(manifest_eval_commit)
+    if len(eval_commits) > 1:
+        raise ValueError(
+            f"eval_git_commit differs across summaries/manifest {manifest_path}: "
+            f"{sorted(eval_commits)}"
+        )
+
     commit_mismatches = [
-        f"{path}={commit}" for path, commit, _ in all_entries if commit != manifest_commit
+        f"{entry.path}={entry.commit}"
+        for entry in all_entries
+        if entry.commit != manifest_commit
     ]
     if commit_mismatches:
         raise ValueError(
@@ -505,9 +580,9 @@ def _validate_cross_artifact_provenance(
         )
 
     dirty_mismatches = [
-        f"{path}={dirty}"
-        for path, _, dirty in all_entries
-        if dirty is not None and dirty != manifest_dirty
+        f"{entry.path}={entry.dirty}"
+        for entry in all_entries
+        if entry.dirty is not None and entry.dirty != manifest_dirty
     ]
     if dirty_mismatches:
         raise ValueError(
@@ -932,6 +1007,13 @@ def load_report_bundle(
     manifest_stats, provenance = load_manifest_compute_stats(manifest_path)
 
     _validate_cross_artifact_provenance(manifest_path, provenance, summary_prov, probe_prov)
+    provenance["eval_git_commit"] = next(
+        (e.executor_commit for e in summary_prov if e.executor_commit is not None),
+        provenance.get("eval_git_commit"),
+    )
+    provenance["probe_git_commits"] = sorted(
+        {e.executor_commit for e in probe_prov if e.executor_commit is not None}
+    )
 
     probe_n_reps = next(iter(probe_aggregates.values())).n_replications
     manifest_n_reps = int(provenance["n_replications"])
@@ -1164,6 +1246,10 @@ def format_verdict_summary(bundle: ReportBundle) -> str:
         extra_prov += f", eval_schema_version={prov.get('eval_schema_version')}"
     if prov.get("decoder_mode") is not None:
         extra_prov += f", decoder_mode={prov.get('decoder_mode')}"
+    if prov.get("eval_git_commit") is not None:
+        extra_prov += f", eval_git_commit={prov.get('eval_git_commit')}"
+    if prov.get("probe_git_commits"):
+        extra_prov += f", probe_git_commit={','.join(prov['probe_git_commits'])}"
     lines.append(
         f"Provenance: budget={prov.get('budget_profile')}, "
         f"git_commit={prov.get('git_commit')}, "

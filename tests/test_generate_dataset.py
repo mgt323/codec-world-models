@@ -10,8 +10,10 @@ from pathlib import Path
 import pytest
 
 from configs.dataset_v0 import (
+    BASE_SEED_OOD_CONFOUND_RESERVED,
     BASE_SEED_OOD_NOISE_RESERVED,
     BASE_SEED_OOD_PARTIAL_OBS,
+    BASE_SEED_OOD_REGIME_SWITCH_RESERVED,
     BASE_SEED_TRAIN,
     BASE_SEED_VAL,
     N_EPISODES_DRY_RUN,
@@ -19,6 +21,7 @@ from configs.dataset_v0 import (
     N_EPISODES_TRAIN_V0,
     N_EPISODES_VAL_V0,
     OOD_PARTIAL_OBS_DIFFICULTY,
+    SPLIT_SPECS,
     active_split_specs,
     assert_episode_seed_ranges_disjoint,
     n_episodes_by_split_for_scale,
@@ -44,6 +47,13 @@ def test_base_seeds_documented_and_disjoint_at_dry_run_scale() -> None:
     assert BASE_SEED_VAL == 2_000_000
     assert BASE_SEED_OOD_PARTIAL_OBS == 3_000_000
     assert BASE_SEED_OOD_NOISE_RESERVED == 4_000_000
+    assert BASE_SEED_OOD_CONFOUND_RESERVED == 8_000_000
+    assert BASE_SEED_OOD_REGIME_SWITCH_RESERVED == 9_000_000
+    # 5e6 intervention, 6e6 counterfactual, and 7e6 probe fallback stay clear.
+    assert {spec.base_seed for spec in SPLIT_SPECS}.isdisjoint(
+        {5_000_000, 6_000_000, 7_000_000}
+    )
+    assert_episode_seed_ranges_disjoint(SPLIT_SPECS, n_episodes=N_EPISODES_TRAIN_V0)
     assert_episode_seed_ranges_disjoint(active_split_specs(), N_EPISODES_DRY_RUN)
     assert_episode_seed_ranges_disjoint(
         active_split_specs(), n_episodes_by_split_for_scale("v0")
@@ -98,7 +108,22 @@ def test_generate_dataset_script_fresh_process_identical_checksums(
     manifest_b = json.loads((out_b / "seed_checksums.json").read_text(encoding="utf-8"))
 
     assert set(manifest_a["splits"]) == {"train", "val", "ood_partial_obs"}
-    assert "ood_noise" in manifest_a["deferred_splits"]
+    assert set(manifest_a["deferred_splits"]) == {
+        "ood_noise",
+        "ood_confound",
+        "ood_regime_switch",
+    }
+    assert manifest_a["deferred_splits"]["ood_noise"]["base_seed_reserved"] == (
+        BASE_SEED_OOD_NOISE_RESERVED
+    )
+    assert manifest_a["deferred_splits"]["ood_confound"]["base_seed_reserved"] == (
+        BASE_SEED_OOD_CONFOUND_RESERVED
+    )
+    assert manifest_a["deferred_splits"]["ood_regime_switch"]["base_seed_reserved"] == (
+        BASE_SEED_OOD_REGIME_SWITCH_RESERVED
+    )
+    for deferred_name in manifest_a["deferred_splits"]:
+        assert not (out_a / f"{deferred_name}.h5").exists()
     assert manifest_a["n_episodes_by_split"] == {
         "train": n_episodes,
         "val": n_episodes,

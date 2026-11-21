@@ -40,6 +40,9 @@ DEFAULT_REGIMES: tuple[str, ...] = ("compute_matched", "info_matched")
 
 MANIFEST_NAME = "manifest.json"
 
+# Invariant I14: scientific aggregation needs at least this many replications.
+MIN_SCIENTIFIC_REPLICATIONS = 3
+
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"
@@ -227,7 +230,7 @@ def build_manifest(
         "created_utc": _utc_now(),
         "updated_utc": _utc_now(),
         "budget_table": budget_table(profile, list(codecs)),
-        "eval_status": "pending_no_producer",
+        "eval_status": "pending",
         "interpretation": (
             "scientific" if profile.scientific else "plumbing_only"
         ),
@@ -302,6 +305,11 @@ def aggregate_scientific_metrics(
     ``tier0`` and ``tier1`` are refused unless ``allow_pilot=True``. Quartiles
     use ``numpy.percentile(..., method="linear")``. A metric that is null for
     every replication is omitted rather than aggregated.
+
+    Contract §2.6: any ``metrics_eval.json`` whose ``scoring_checkpoint`` is not
+    ``"final"`` aborts aggregation. Invariant I14: unless ``allow_pilot`` is set,
+    every aggregated (regime, split, metric, codec) cell needs at least 3
+    replication values.
     """
     import numpy as np
 
@@ -321,6 +329,12 @@ def aggregate_scientific_metrics(
         codec = rep_dir.parent.name
         match_regime = rep_dir.parent.parent.name
         payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+        scoring_checkpoint = payload.get("scoring_checkpoint")
+        if scoring_checkpoint != "final":
+            raise ValueError(
+                f"{metrics_path}: scoring_checkpoint must be 'final' to aggregate "
+                f"(contract §2.6), got {scoring_checkpoint!r}"
+            )
         splits = payload.get("splits", payload)
         for split_name, metrics in splits.items():
             if not isinstance(metrics, dict):
@@ -334,6 +348,12 @@ def aggregate_scientific_metrics(
                 ).append(float(value))
     summaries: dict[tuple[str, str], dict[str, Any]] = {}
     for (match_regime, split_name, metric_name, codec), values in sorted(by_cell.items()):
+        if not allow_pilot and len(values) < MIN_SCIENTIFIC_REPLICATIONS:
+            raise ValueError(
+                f"{match_regime}/{split_name}/{metric_name}/{codec}: need >= "
+                f"{MIN_SCIENTIFIC_REPLICATIONS} replications to aggregate, got "
+                f"{len(values)} (Invariant I14)"
+            )
         array = np.asarray(values, dtype=np.float64)
         q1, median, q3 = np.percentile(array, [25.0, 50.0, 75.0], method="linear")
         bucket = summaries.setdefault(

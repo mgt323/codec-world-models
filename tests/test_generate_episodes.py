@@ -154,7 +154,7 @@ def test_active_splits_accepted(split_name: str) -> None:
 
 
 def test_intervention_fraction_nonzero_not_implemented() -> None:
-    with pytest.raises(NotImplementedError, match="Prompt B2"):
+    with pytest.raises(NotImplementedError, match="not implemented for generate_split"):
         _materialize(n_episodes=1, n_steps=2, intervention_fraction=0.1)
 
 

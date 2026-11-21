@@ -21,6 +21,7 @@ from typing import Any, Literal, Sequence
 import torch
 import torch.nn.functional as F
 
+from configs.dataset_v0 import BASE_SEED_TRAIN
 from model.architecture import (
     PAD_SEGMENT_ID,
     SHARED_VOCAB_SIZE,
@@ -53,6 +54,7 @@ from train.data import (
     synthetic_episodes,
 )
 from train.packer import iter_packed_batches_streaming, prefetch_batches
+from world.schema import SCHEMA_VERSION
 
 LOG_FLUSH_INTERVAL = 10
 
@@ -605,6 +607,11 @@ def run_training(
         "budget_profile": config.budget_profile,
         "dataset_split_train": dataset_path.as_posix(),
         "dataset_checksum": file_sha256(dataset_path),
+        # Provenance only. Not RunConfig fields, so config_sha256 is unchanged.
+        # dataset_base_seed is the locked train-split world seed
+        # (episode_seed = dataset_base_seed + episode_index).
+        "dataset_base_seed": BASE_SEED_TRAIN,
+        "schema_version": SCHEMA_VERSION,
         "episode_pool_source": pool_source,
         "episode_pool_size": len(pool_list),
         "episode_pool_fingerprint": pool_fingerprint(pool_list),
