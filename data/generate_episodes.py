@@ -103,7 +103,8 @@ def generate_split(
         )
     if intervention_fraction != 0.0:
         raise NotImplementedError(
-            "intervention_fraction > 0 is reserved for Prompt B2 "
+            "intervention_fraction > 0 is not implemented for generate_split; "
+            "use generate_intervention_episode for intervention episodes "
             f"(got {intervention_fraction})"
         )
 
