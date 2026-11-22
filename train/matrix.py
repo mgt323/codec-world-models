@@ -286,6 +286,13 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _parse_rep_id(dir_name: str) -> int | str:
+    """Parse ``rep<N>`` into the integer ``N``; fall back to the raw name."""
+    if dir_name.startswith("rep") and dir_name[3:].isdigit():
+        return int(dir_name[3:])
+    return dir_name
+
+
 def aggregate_scientific_metrics(
     runs_root: Path,
     *,
@@ -323,11 +330,12 @@ def aggregate_scientific_metrics(
     if not root.is_dir():
         raise FileNotFoundError(root)
     # runs_root is artifacts/runs/full_v0: match_regime / codec / repN
-    by_cell: dict[tuple[str, str, str, str], list[float]] = {}
+    by_cell: dict[tuple[str, str, str, str], list[tuple[int | str, float]]] = {}
     for metrics_path in sorted(root.glob("*/*/*/metrics_eval.json")):
         rep_dir = metrics_path.parent
         codec = rep_dir.parent.name
         match_regime = rep_dir.parent.parent.name
+        rep_id = _parse_rep_id(rep_dir.name)
         payload = json.loads(metrics_path.read_text(encoding="utf-8"))
         scoring_checkpoint = payload.get("scoring_checkpoint")
         if scoring_checkpoint != "final":
@@ -345,9 +353,11 @@ def aggregate_scientific_metrics(
                 by_cell.setdefault(
                     (match_regime, str(split_name), str(metric_name), codec),
                     [],
-                ).append(float(value))
+                ).append((rep_id, float(value)))
     summaries: dict[tuple[str, str], dict[str, Any]] = {}
-    for (match_regime, split_name, metric_name, codec), values in sorted(by_cell.items()):
+    for (match_regime, split_name, metric_name, codec), pairs in sorted(by_cell.items()):
+        rep_ids = [rid for rid, _ in pairs]
+        values = [val for _, val in pairs]
         if not allow_pilot and len(values) < MIN_SCIENTIFIC_REPLICATIONS:
             raise ValueError(
                 f"{match_regime}/{split_name}/{metric_name}/{codec}: need >= "
@@ -392,6 +402,7 @@ def aggregate_scientific_metrics(
             "q3": float(q3),
             "iqr": float(q3 - q1),
             "values": [float(value) for value in values],
+            "rep_ids": rep_ids,
         }
         bucket["n_replications"] = max(bucket["n_replications"], len(values))
     out_root = Path(output_root)

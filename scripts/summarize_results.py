@@ -229,8 +229,8 @@ def render_fig3_probes_and_rsa(
     *,
     cka_regime: str = "compute_matched",
 ) -> None:
-    fig = Figure(figsize=(11.0, 4.8), constrained_layout=True)
-    ax_cka, ax_probe = fig.subplots(1, 2)
+    fig = Figure(figsize=(16.0, 4.8), constrained_layout=True)
+    ax_cka, ax_probe, ax_probe_reg = fig.subplots(1, 3)
 
     cka = bundle.probe_aggregates[cka_regime].cka_median
     im = ax_cka.imshow(cka, vmin=0.0, vmax=1.0, cmap="viridis", aspect="equal")
@@ -254,6 +254,16 @@ def render_fig3_probes_and_rsa(
     _plot_grouped_whiskers(ax_probe, stats_by_regime, REPORT_CODECS, show_legend=True)
     ax_probe.set_ylabel("Frozen Linear Probe R² (hidden_c)", fontsize=9.5)
     ax_probe.set_title("B. Frozen Linear Probe: hidden_c R² (↑)", fontsize=10.5, fontweight="bold", loc="left")
+
+    reg_stats_by_regime = {
+        regime: bundle.probe_aggregates[regime].probe_metrics["regime_accuracy"]
+        for regime in MATCH_REGIMES
+    }
+    _plot_grouped_whiskers(ax_probe_reg, reg_stats_by_regime, REPORT_CODECS, show_legend=False)
+    ax_probe_reg.set_ylabel("Frozen Linear Probe Accuracy (ProbeReg)", fontsize=9.5)
+    ax_probe_reg.set_title(
+        "C. Frozen Linear Probe: regime accuracy (↑)", fontsize=10.5, fontweight="bold", loc="left"
+    )
 
     fig.suptitle(
         f"Representational Similarity & Latent Probing ({bundle.provenance.get('budget_profile', 'full_v0')})",

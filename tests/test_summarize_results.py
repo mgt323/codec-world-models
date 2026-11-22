@@ -476,3 +476,45 @@ def test_verdict_marks_measurement_invalid_when_parse_fail_rate_exceeds_half(
 
 
 
+
+
+def test_report_surfaces_git_dirty_dedups_outliers_and_defers_control_parse_fail(
+    tmp_path: Path,
+) -> None:
+    agg_dir, probes_dir, manifest_path = _write_synthetic_artifacts(
+        tmp_path / "tier_b1",
+        intervention_parse_fail_override={
+            **{c: [0.05] * 5 for c in REPORT_CODECS},
+            "B_bag": [0.80] * 5,
+            "B_shuffle": [0.90] * 5,
+        },
+    )
+    _tag_executor_commits(tmp_path / "tier_b1", eval_commit="e1", probe_commit="p1")
+
+    # Inject an extreme MSE outlier into both mirrored metrics on ood_partial_obs.
+    path = agg_dir / "compute_matched" / "ood_partial_obs" / "summary.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["metrics"]["next_state_mse"] = {
+        c: median_iqr([0.1, 0.1, 0.1, 0.1, 0.1]) for c in REPORT_CODECS
+    }
+    payload["metrics"]["next_state_mse"]["D"]["values"] = [0.1, 0.1, 6.9e18, 0.1, 0.1]
+    payload["metrics"]["partial_obs_next_state_mse"]["D"]["values"] = [0.1, 0.1, 6.9e18, 0.1, 0.1]
+    payload["metrics"]["next_state_mse"]["D"]["rep_ids"] = [0, 1, 2, 3, 4]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    bundle = load_report_bundle(agg_dir, probes_dir, manifest_path)
+    assert bundle.provenance["eval_git_dirty"] == [True]
+    assert bundle.provenance["probe_git_dirty"] == [True]
+    text = format_verdict_summary(bundle)
+    assert "eval_git_dirty=True" in text
+    assert "probe_git_dirty=True" in text
+
+    outliers = [o for o in bundle.verdict.extreme_outliers if "compute_matched/ood_partial_obs" in o]
+    assert len(outliers) == 1
+    assert "next_state_mse/D[rep2]" in outliers[0]
+
+    for regime in MATCH_REGIMES:
+        key = (regime, "intervention.intervention_accuracy")
+        assert bundle.verdict.b_vs_e_outcomes[key] == "DEFERRED"
+        assert bundle.verdict.b_vs_e_organization[key] == "DEFERRED"
+        assert bundle.verdict.b_vs_e_direction[key] != "DEFERRED"

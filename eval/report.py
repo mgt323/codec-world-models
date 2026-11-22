@@ -750,6 +750,12 @@ def evaluate_verdict(
     for (regime, split), metrics_map in eval_summaries.items():
         for metric_name, codec_map in metrics_map.items():
             is_mse = metric_name.endswith("_mse")
+            # partial_obs_next_state_mse mirrors next_state_mse on ood_partial_obs;
+            # skip it for outlier listing so each cell is reported once.
+            skip_outliers = (
+                metric_name == "partial_obs_next_state_mse"
+                and "next_state_mse" in metrics_map
+            )
             for codec, stats in codec_map.items():
                 for rep_idx, val in enumerate(stats.values):
                     if stats.rep_ids is not None and rep_idx < len(stats.rep_ids):
@@ -760,11 +766,11 @@ def evaluate_verdict(
 
                     if not math.isfinite(val):
                         finite_ok = False
-                        if is_mse:
+                        if is_mse and not skip_outliers:
                             extreme_outliers.append(
                                 f"{regime}/{split}/{metric_name}/{codec}[{rep_label}]={val}"
                             )
-                    elif is_mse and val > EXTREME_MSE_THRESHOLD:
+                    elif is_mse and not skip_outliers and val > EXTREME_MSE_THRESHOLD:
                         extreme_outliers.append(
                             f"{regime}/{split}/{metric_name}/{codec}[{rep_label}]={val:.3g}"
                         )
@@ -840,6 +846,39 @@ def evaluate_verdict(
                             f"{INTERVENTION_PARSE_FAIL_INVALID_THRESHOLD:.2f} for "
                             f"{len(invalid_codecs)}/{len(codec_list)} codecs "
                             f"({', '.join(invalid_codecs)})"
+                        )
+                        continue
+
+            if split == "intervention" and metric_name == "intervention_accuracy":
+                pf_map = eval_summaries[(regime, "intervention")].get("parse_fail_rate")
+                if pf_map is not None:
+                    org_deferred = [
+                        c
+                        for c in ("B", *PERMUTED_CONTROLS)
+                        if c in pf_map and pf_map[c].median >= INTERVENTION_PARSE_FAIL_COMPARE_MAX
+                    ]
+                    dir_deferred = [
+                        c
+                        for c in ("B", "B_reverse")
+                        if c in pf_map and pf_map[c].median >= INTERVENTION_PARSE_FAIL_COMPARE_MAX
+                    ]
+                    all_deferred = [
+                        c
+                        for c in ("B", *E_CONTROLS)
+                        if c in pf_map and pf_map[c].median >= INTERVENTION_PARSE_FAIL_COMPARE_MAX
+                    ]
+                    if all_deferred:
+                        b_vs_e_outcomes[key] = "DEFERRED"
+                        b_vs_e_organization[key] = "DEFERRED" if org_deferred else _classify_b_vs_group(
+                            b_stats, org_group, higher_is_better=higher_is_better
+                        )
+                        b_vs_e_direction[key] = "DEFERRED" if dir_deferred else _classify_b_vs_group(
+                            b_stats, dir_group, higher_is_better=higher_is_better
+                        )
+                        b_vs_e_notes[key] = (
+                            f"Deferred: intervention parse_fail_rate >= "
+                            f"{INTERVENTION_PARSE_FAIL_COMPARE_MAX:.2f} for "
+                            f"{', '.join(all_deferred)}"
                         )
                         continue
 
@@ -1013,6 +1052,13 @@ def load_report_bundle(
     )
     provenance["probe_git_commits"] = sorted(
         {e.executor_commit for e in probe_prov if e.executor_commit is not None}
+    )
+
+    provenance["eval_git_dirty"] = sorted(
+        {e.executor_dirty for e in summary_prov if e.executor_dirty is not None}
+    )
+    provenance["probe_git_dirty"] = sorted(
+        {e.executor_dirty for e in probe_prov if e.executor_dirty is not None}
     )
 
     probe_n_reps = next(iter(probe_aggregates.values())).n_replications
@@ -1248,8 +1294,12 @@ def format_verdict_summary(bundle: ReportBundle) -> str:
         extra_prov += f", decoder_mode={prov.get('decoder_mode')}"
     if prov.get("eval_git_commit") is not None:
         extra_prov += f", eval_git_commit={prov.get('eval_git_commit')}"
+    if prov.get("eval_git_dirty"):
+        extra_prov += f", eval_git_dirty={','.join(str(d) for d in prov['eval_git_dirty'])}"
     if prov.get("probe_git_commits"):
         extra_prov += f", probe_git_commit={','.join(prov['probe_git_commits'])}"
+    if prov.get("probe_git_dirty"):
+        extra_prov += f", probe_git_dirty={','.join(str(d) for d in prov['probe_git_dirty'])}"
     lines.append(
         f"Provenance: budget={prov.get('budget_profile')}, "
         f"git_commit={prov.get('git_commit')}, "

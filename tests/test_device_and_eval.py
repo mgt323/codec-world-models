@@ -223,6 +223,8 @@ def test_aggregate_scientific_metrics_writes_median_iqr_summaries(
     assert summary["metrics"]["next_state_mse"]["A"]["median"] == pytest.approx(0.6)
     assert summary["metrics"]["next_state_mse"]["B"]["median"] == pytest.approx(0.2)
     assert summary["metrics"]["next_state_mse"]["A"]["iqr"] == pytest.approx(0.2)
+    assert summary["metrics"]["next_state_mse"]["A"]["rep_ids"] == [0, 1, 2]
+    assert summary["metrics"]["next_state_mse"]["B"]["rep_ids"] == [0, 1, 2]
 
 
 def _write_metrics_eval(
