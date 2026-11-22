@@ -198,6 +198,11 @@ def test_aggregate_scientific_metrics_writes_median_iqr_summaries(
                         "ood_regime_accuracy": None,
                     }
                 },
+                # Tier B2 additive block: must never leak into §5 summaries.
+                "diagnostics": {
+                    "version": "eval_diagnostics_v1",
+                    "splits": {"val": {"next_state_mse_median": 123.0}},
+                },
             }
             (rep_dir / "metrics_eval.json").write_text(
                 json.dumps(doc), encoding="utf-8"
@@ -225,6 +230,7 @@ def test_aggregate_scientific_metrics_writes_median_iqr_summaries(
     assert summary["metrics"]["next_state_mse"]["A"]["iqr"] == pytest.approx(0.2)
     assert summary["metrics"]["next_state_mse"]["A"]["rep_ids"] == [0, 1, 2]
     assert summary["metrics"]["next_state_mse"]["B"]["rep_ids"] == [0, 1, 2]
+    assert "next_state_mse_median" not in summary["metrics"]
 
 
 def _write_metrics_eval(
@@ -424,6 +430,37 @@ def test_generate_eval_splits_and_evaluate_runs_end_to_end(
     assert metrics_doc["eval_schema_version"] == updated_manifest["eval_schema_version"]
     assert metrics_doc["splits"]["intervention"]["parse_fail_rate"] is not None
     assert 0.0 <= metrics_doc["splits"]["intervention"]["parse_fail_rate"] <= 1.0
+
+    # Tier B2: the additive diagnostics block sits beside, never inside, the locked
+    # splits, and scoring without it reproduces the locked metrics exactly.
+    diagnostics = metrics_doc["diagnostics"]
+    assert diagnostics["version"] == "eval_diagnostics_v1"
+    assert diagnostics["locked_metrics_unchanged"] is True
+    assert set(diagnostics["splits"]) == set(metrics_doc["splits"])
+    assert "intervention_accuracy_both_observed" in diagnostics["splits"]["intervention"]
+    assert "zero_baseline_acc" in diagnostics["splits"]["intervention"]
+    assert "next_state_mse_median" in diagnostics["splits"]["val"]
+    assert "cf_step_mse_at_intervention" in diagnostics["splits"]["counterfactual"]
+    locked_splits = metrics_doc["splits"]
+    rc = evaluate_main(
+        [
+            "--runs-root",
+            str(runs_root),
+            "--raw-dir",
+            str(raw_dir),
+            "--eval-dir",
+            str(eval_dir),
+            "--vocab-dir",
+            str(vocab_dir),
+            "--device",
+            "cpu",
+            "--skip-diagnostics",
+        ]
+    )
+    assert rc == 0
+    plain_doc = json.loads((cell.run_dir / "metrics_eval.json").read_text(encoding="utf-8"))
+    assert "diagnostics" not in plain_doc
+    assert plain_doc["splits"] == locked_splits
 
 
 def test_intervention_values_match_training_token_length_distribution() -> None:

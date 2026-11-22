@@ -159,7 +159,7 @@ uv run python scripts/verify_tier_artifacts.py tier1
 ```
 
 #### Step 3.6 — Generate Eval Splits, Score Runs & Aggregate (`metrics_eval.json` / `summary.json`)
-Generate the deterministic intervention and counterfactual evaluation splits, score `checkpoints/final.pt` in frozen `fp32` (`eval_v2`), and compute contract §5 median/IQR aggregates for `full_v0` (`--runs-root` and `--raw-dir` are required; `--eval-dir` and `--vocab-dir` default to `artifacts/eval_splits` and `artifacts/vocabs`):
+Generate the deterministic intervention and counterfactual evaluation splits, score `checkpoints/final.pt` in frozen `fp32` (`eval_v2`), and compute contract §5 median/IQR aggregates for `full_v0` (`--runs-root` and `--raw-dir` are required; `--eval-dir` and `--vocab-dir` default to `artifacts/eval_splits` and `artifacts/vocabs`): Each `metrics_eval.json` also gets an additive `diagnostics` block (`eval/diagnostics.py`; not aggregated, locked `splits` unchanged; `--skip-diagnostics` omits it):
 
 ```bash
 uv run python scripts/generate_eval_splits.py --out-dir artifacts/eval_splits
@@ -173,7 +173,7 @@ uv run python scripts/evaluate_runs.py \
 ```
 
 #### Step 3.7 — Run Post-Hoc Frozen Linear Probes & RSA
-Extract frozen final-layer hidden states at the last token of framed episode prefixes (`states[0..t]`, preserving original `t`) over a shared world-state fixture, fit held-out ridge probes (`PROBE_RIDGE_ALPHA = 1.0`, deterministic episode-level 50/50 split with train-only standardization) for `hidden_c_r2`, `next_b_r2` (`state_{t+1}.b`), and `regime_accuracy` (ridge-to-one-hot + softmax), and compute CKA, SVCCA, and orthogonal Procrustes similarities. Run *before* `scripts/summarize_results.py`, writing to `artifacts/probes/full_v0/{regime}/rep{r}/probes.json`:
+Extract frozen final-layer hidden states at the last token of framed episode prefixes (`states[0..t]`, preserving original `t`) over a shared world-state fixture, fit held-out ridge probes (`PROBE_RIDGE_ALPHA = 1.0`, deterministic episode-level 50/50 split with train-only standardization) for `hidden_c_r2`, `next_b_r2` (`state_{t+1}.b`), and `regime_accuracy` (ridge-to-one-hot + softmax), and compute CKA, SVCCA, and orthogonal Procrustes similarities. Each `probes.json` also records additive Tier B2 diagnostics that leave those locked keys unchanged: `hidden_c_r2_common_cause`, codec-independent `fixture_baselines` (`persistence_next_b_r2`, `running_mean_next_b_r2`, `oracle_next_b_r2`), and `untrained_probes` (disable with `--skip-untrained`). See `docs/ANALYSIS_V2_VERIFICATION.md` B.2 and B.5. Run *before* `scripts/summarize_results.py`, writing to `artifacts/probes/full_v0/{regime}/rep{r}/probes.json`:
 
 ```bash
 # Matrix mode (probes every match_regime x replication cell into artifacts/probes/full_v0/{regime}/rep{r}/probes.json)

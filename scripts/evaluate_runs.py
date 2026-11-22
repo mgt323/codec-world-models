@@ -20,6 +20,7 @@ import torch  # noqa: E402
 
 from data.hdf5_episodes import read_episodes_hdf5  # noqa: E402
 from eval.checkpoint import load_scoring_checkpoint  # noqa: E402
+from eval.diagnostics import DIAGNOSTICS_VERSION, compute_eval_diagnostics  # noqa: E402
 from eval.metrics import METRIC_KEYS, empty_metrics  # noqa: E402
 from eval.score import (  # noqa: E402
     COUNTERFACTUAL_BASE_SEED,
@@ -64,6 +65,7 @@ def _score_run(
     decoder_mode: str = "skeleton",
     metrics_out_dir: Path | None = None,
     episode_cache: dict[str, Any] | None = None,
+    diagnostics: bool = True,
 ) -> None:
     config = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
     codec = str(config["codec"])
@@ -140,6 +142,23 @@ def _score_run(
     counterfactual_metrics["counterfactual_divergence_mse"] = counterfactual_divergence_mse(
         model, codec, pairs, vocab, device, decoder_mode=decoder_mode
     )
+    # Additive Tier B2 diagnostics: a separate top-level block. The locked
+    # ``splits`` metrics above are not modified and §5 aggregation ignores it.
+    diagnostics_block = (
+        compute_eval_diagnostics(
+            model,
+            codec,
+            vocab,
+            device,
+            val_episodes=val_eps,
+            ood_episodes=ood_eps,
+            intervention_episodes=intervention_eps,
+            counterfactual_pairs=pairs,
+            decoder_mode=decoder_mode,
+        )
+        if diagnostics
+        else None
+    )
     document = {
         "eval_schema_version": EVAL_SCHEMA_VERSION,
         "decoder_mode": decoder_mode,
@@ -159,6 +178,7 @@ def _score_run(
             "intervention": intervention_metrics,
             "counterfactual": counterfactual_metrics,
         },
+        **({"diagnostics": diagnostics_block} if diagnostics_block is not None else {}),
     }
     for split_metrics in document["splits"].values():
         missing = [key for key in METRIC_KEYS if key not in split_metrics]
@@ -201,6 +221,11 @@ def main(argv: list[str] | None = None) -> int:
         "--allow-pilot",
         action="store_true",
         help="Allow §5 aggregation on plumbing profiles (tier0/tier1).",
+    )
+    parser.add_argument(
+        "--skip-diagnostics",
+        action="store_true",
+        help=f"Do not write the additive {DIAGNOSTICS_VERSION} block to metrics_eval.json.",
     )
     parser.add_argument("--output-root", type=Path, default=_ROOT / "artifacts")
     parser.add_argument(
@@ -247,6 +272,7 @@ def main(argv: list[str] | None = None) -> int:
             decoder_mode=args.decoder_mode,
             metrics_out_dir=metrics_out_dir,
             episode_cache=episode_cache,
+            diagnostics=not args.skip_diagnostics,
         )
     src_manifest_path = args.runs_root / MANIFEST_NAME
     manifest = load_manifest(src_manifest_path)

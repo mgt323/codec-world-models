@@ -20,6 +20,20 @@ Single-cell mode writes ``--out-dir/probes.json``. Matrix mode (``--matrix``)
 loops over regimes and replications and writes
 ``--out-dir/{regime}/rep{r}/probes.json``, the layout ``eval/report.py`` reads.
 
+Additive diagnostics (Tier B2, recording only; the locked keys above keep their
+definitions and values):
+
+* ``probes[codec].hidden_c_r2_common_cause``: the same ``PROBE_RIDGE_ALPHA`` ridge
+  fit and scored on ``COMMON_CAUSE`` rows only (``hidden_c`` is irrelevant to the
+  observables in the other three regimes, which dilutes the pooled score).
+* ``fixture_baselines``: codec-independent held-out ``R^2`` of trivial and oracle
+  predictors of ``state_{t+1}.b`` on exactly the ``next_b_r2`` test rows
+  (``persistence_next_b_r2``, ``running_mean_next_b_r2``, ``oracle_next_b_r2``).
+* ``untrained_probes[codec]``: the three locked probes plus the common-cause score
+  on the *untrained* initialization of the same run (same ``model_init_seed`` and
+  codec), giving each trained score an initialization floor. Disable with
+  ``--skip-untrained``.
+
 Provenance: ``git_commit`` / ``git_dirty`` are inherited from the training
 ``manifest.json`` in ``--runs-root`` (so ``eval/report.py`` can cross-check them
 against the manifest); the commit that executed the probes is recorded
@@ -45,10 +59,18 @@ import torch  # noqa: E402
 from data.hdf5_episodes import episodes_sha256, read_episodes_hdf5  # noqa: E402
 from eval.checkpoint import load_scoring_checkpoint  # noqa: E402
 from eval.score import _fit_regime_probe, _probe_probabilities, episode_hidden  # noqa: E402
+from model.architecture import build_model  # noqa: E402
+from model.init import initialize_model  # noqa: E402
+from probes.baselines import (  # noqa: E402
+    last_observed_b,
+    oracle_next_b_mean,
+    prefix_mean_observed_b,
+)
 from probes.linear import (  # noqa: E402
     PROBE_RIDGE_ALPHA,
     PROBE_TRAIN_FRACTION,
     heldout_ridge_r2,
+    r2_score,
     split_by_group,
 )
 from probes.rsa import linear_cka, orthogonal_procrustes, svcca_mean_correlation  # noqa: E402
@@ -64,6 +86,12 @@ DEFAULT_MATCH_REGIMES = ("compute_matched", "info_matched")
 STEPS_PER_EPISODE = 30
 FALLBACK_SEED_BASE = 7_000_000
 _REGIMES = tuple(CausalRegime)
+_COMMON_CAUSE_INDEX = _REGIMES.index(CausalRegime.COMMON_CAUSE)
+# Minimum rows per split for the common-cause subset ridge fit / held-out score.
+_MIN_SUBSET_ROWS = 2
+ADDITIVE_DIAGNOSTICS_VERSION = "probe_diagnostics_v1"
+# Baseline prediction for prefixes in which no ``b`` has been observed yet.
+NO_OBSERVED_B_FALLBACK = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,7 +182,7 @@ def _probe_codec(
     samples: list[ProbeSample],
     train_mask: np.ndarray,
     test_mask: np.ndarray,
-) -> dict[str, float]:
+) -> dict[str, float | int | None]:
     labels = np.asarray([s.regime_index for s in samples], dtype=np.int64)
     hidden_c = np.asarray([s.hidden_c for s in samples], dtype=np.float64)
     has_next = np.asarray([s.next_b is not None for s in samples], dtype=bool)
@@ -166,6 +194,15 @@ def _probe_codec(
     accuracy = float(np.mean(probabilities.argmax(axis=1) == labels[test_mask]))
     train_next = train_mask & has_next
     test_next = test_mask & has_next
+    # Additive (Tier B2): same ridge, same split, restricted to COMMON_CAUSE rows.
+    common_cause = labels == _COMMON_CAUSE_INDEX
+    train_cc = train_mask & common_cause
+    test_cc = test_mask & common_cause
+    hidden_c_r2_common_cause: float | None = None
+    if int(train_cc.sum()) >= _MIN_SUBSET_ROWS and int(test_cc.sum()) >= _MIN_SUBSET_ROWS:
+        hidden_c_r2_common_cause = heldout_ridge_r2(
+            features[train_cc], hidden_c[train_cc], features[test_cc], hidden_c[test_cc]
+        )
     return {
         "hidden_c_r2": heldout_ridge_r2(
             features[train_mask],
@@ -177,10 +214,73 @@ def _probe_codec(
         "next_b_r2": heldout_ridge_r2(
             features[train_next], next_b[train_next], features[test_next], next_b[test_next]
         ),
+        "hidden_c_r2_common_cause": hidden_c_r2_common_cause,
+        "n_common_cause_train_states": int(train_cc.sum()),
+        "n_common_cause_test_states": int(test_cc.sum()),
         "n_states": int(features.shape[0]),
         "n_train_states": int(train_mask.sum()),
         "n_test_states": int(test_mask.sum()),
     }
+
+
+def _fixture_baselines(
+    samples: list[ProbeSample],
+    test_mask: np.ndarray,
+) -> dict[str, float | int | None]:
+    """Codec-independent next-``b`` reference scores on the ``next_b_r2`` test rows.
+
+    ``R^2`` is taken against the test-row mean, exactly as for ``next_b_r2``.
+    Prefixes with no observed ``b`` yet predict the constant
+    ``NO_OBSERVED_B_FALLBACK`` (no train or test target enters a prediction).
+    """
+    has_next = np.asarray([s.next_b is not None for s in samples], dtype=bool)
+    test_next = test_mask & has_next
+    if int(test_next.sum()) < _MIN_SUBSET_ROWS:
+        return {
+            "persistence_next_b_r2": None,
+            "running_mean_next_b_r2": None,
+            "oracle_next_b_r2": None,
+            "n_test_next_states": int(test_next.sum()),
+        }
+    next_b = np.asarray(
+        [0.0 if s.next_b is None else s.next_b for s in samples], dtype=np.float64
+    )
+    persistence = np.asarray(
+        [last_observed_b(s.prefix, fallback=NO_OBSERVED_B_FALLBACK) for s in samples],
+        dtype=np.float64,
+    )
+    running_mean = np.asarray(
+        [prefix_mean_observed_b(s.prefix, fallback=NO_OBSERVED_B_FALLBACK) for s in samples],
+        dtype=np.float64,
+    )
+    oracle = np.asarray(
+        [
+            oracle_next_b_mean(_REGIMES[s.regime_index], s.hidden_c)
+            for s in samples
+        ],
+        dtype=np.float64,
+    )
+    target = next_b[test_next]
+    return {
+        "persistence_next_b_r2": r2_score(target, persistence[test_next]),
+        "running_mean_next_b_r2": r2_score(target, running_mean[test_next]),
+        "oracle_next_b_r2": r2_score(target, oracle[test_next]),
+        "n_test_next_states": int(test_next.sum()),
+        "no_observed_b_fallback": NO_OBSERVED_B_FALLBACK,
+    }
+
+
+def _untrained_model(run_dir: Path, codec: str, device: torch.device):
+    """Frozen untrained initialization of ``run_dir``'s run (same seed and codec)."""
+    config = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+    model = build_model()
+    initialize_model(model, model_init_seed=int(config["model_init_seed"]), codec_name=codec)
+    model.to(device)
+    model.float()
+    model.eval()
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+    return model
 
 
 def _run_cell(
@@ -195,9 +295,11 @@ def _run_cell(
     out_dir: Path,
     training: dict[str, object],
     fixture_info: dict[str, object],
+    fixture_baselines: dict[str, float | int | None],
 ) -> Path:
     activations: dict[str, np.ndarray] = {}
-    probe_report: dict[str, dict[str, float]] = {}
+    probe_report: dict[str, dict[str, float | int | None]] = {}
+    untrained_report: dict[str, dict[str, float | int | None]] = {}
     for codec in DEFAULT_CODECS:
         run_dir = args.runs_root / match_regime / codec / f"rep{replication}"
         ckpt = run_dir / "checkpoints" / "final.pt"
@@ -212,6 +314,15 @@ def _run_cell(
         activations[codec] = features
         probe_report[codec] = _probe_codec(features, samples, train_mask, test_mask)
         print(f"probe {match_regime}/rep{replication} {codec} states={features.shape[0]}")
+        if not args.skip_untrained:
+            untrained = _untrained_model(run_dir, codec, device)
+            untrained_features = np.stack(
+                [episode_hidden(untrained, codec, s.episode, vocab, device) for s in samples]
+            )
+            untrained_report[codec] = _probe_codec(
+                untrained_features, samples, train_mask, test_mask
+            )
+            print(f"probe-untrained {match_regime}/rep{replication} {codec}")
     if not activations:
         raise SystemExit(f"no final checkpoints found for {match_regime}/rep{replication}")
 
@@ -254,9 +365,21 @@ def _run_cell(
             "n_test_states": int(test_mask.sum()),
             "next_b_target": "state_{t+1}.b from prefix 0..t",
             "regime_probe": "eval.score._fit_regime_probe (ridge to one-hot)",
+            "additive_diagnostics": {
+                "version": ADDITIVE_DIAGNOSTICS_VERSION,
+                "locked_keys_unchanged": ["hidden_c_r2", "regime_accuracy", "next_b_r2"],
+                "added": [
+                    "probes[codec].hidden_c_r2_common_cause",
+                    "fixture_baselines",
+                    *([] if args.skip_untrained else ["untrained_probes[codec]"]),
+                ],
+                "kind": "recording_change_no_methodology_change",
+            },
             **fixture_info,
         },
         "probes": probe_report,
+        "fixture_baselines": fixture_baselines,
+        **({} if args.skip_untrained else {"untrained_probes": untrained_report}),
         "similarity": similarity,
     }
     path = out_dir / "probes.json"
@@ -280,6 +403,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n-states", type=int, default=10_000)
     parser.add_argument("--device", choices=("auto", "rocm", "cuda", "cpu"), default="auto")
     parser.add_argument("--require-gpu", action="store_true")
+    parser.add_argument(
+        "--skip-untrained",
+        action="store_true",
+        help="Skip the untrained-initialization probe scores (additive diagnostic).",
+    )
     parser.add_argument("--match-regime", default="compute_matched")
     parser.add_argument("--replication", type=int, default=0)
     parser.add_argument(
@@ -360,6 +488,7 @@ def main(argv: list[str] | None = None) -> int:
         "fixture_n_episodes": len(episodes),
         "fixture_fallback_seed_base": FALLBACK_SEED_BASE,
     }
+    fixture_baselines = _fixture_baselines(samples, test_mask)
     for regime, replication, out_dir in cells:
         _run_cell(
             args=args,
@@ -372,6 +501,7 @@ def main(argv: list[str] | None = None) -> int:
             out_dir=out_dir,
             training=training,
             fixture_info=fixture_info,
+            fixture_baselines=fixture_baselines,
         )
     return 0
 

@@ -1,6 +1,6 @@
 # Verification of the post-`probes_v2` analyses
 
-**Status:** findings and remediation plan only. No training, evaluation, probe, or reporting code was changed to produce this document.
+**Status:** Parts A and B were written as findings and a remediation plan; no code changed to produce them. Implementation status of Part B is recorded at the top of section B (B.1 committed in `7bf4c18`; B.2 code implemented, reruns not yet executed).
 
 **Sources adjudicated:** [analysis.txt](../analysis.txt), three independent write-ups of the same `full_v0` checkpoints after the `probes_v2` rerun (`GEMINI 4 NEON`, `CLAUDE SONNET 5.5`, `CHATGPT`).
 
@@ -305,7 +305,18 @@ This replaces ChatGPT’s section 9. “Supported” here means “the printed c
 
 ## B. Required changes, I15 gates, and rerun matrix
 
-Nothing in this section has been implemented. Items are split by whether they change a measured quantity.
+Items are split by whether they change a measured quantity.
+
+**Implementation status**
+
+| Item | Status |
+|---|---|
+| B.1 reporting and provenance | Implemented, commit `7bf4c18`. Regenerates from existing JSON; no rerun of probes or eval needed. |
+| B.2 probe diagnostics | Code implemented (`probes/baselines.py`, `scripts/run_probes.py`, tests). **Not yet rerun**: no `probes.json` on disk contains the new keys. |
+| B.2 eval diagnostics | Code implemented (`eval/diagnostics.py`, `scripts/evaluate_runs.py`, tests). **Not yet rerun**: no `metrics_eval.json` on disk contains the `diagnostics` block. |
+| B.3 | Unchanged. None of those items were touched. |
+
+Methodology changed: **No.** B.2 is a recording change under I15 as defined below. It is labelled in the output itself (`probe_protocol.additive_diagnostics` in `probes.json`, `diagnostics.kind = "recording_change_no_methodology_change"` in `metrics_eval.json`).
 
 I15, from `docs/INVARIANTS.md`: a change to the information contract, codec definitions, matching, evaluation targets, primary endpoints, or seed and split policy needs an explicit methodological flag and a plan update. A reporting fix that prints the same `metrics_eval.json` differently does not. An added diagnostic key that leaves the locked keys byte-identical in definition is a recording change; it still needs to be identified as such, and it needs a rerun of the stage that computes it. It does not authorize editing one codec, one loss, or one parser.
 
@@ -340,6 +351,38 @@ These add keys. They do not retune `PROBE_RIDGE_ALPHA`, `PROBE_L2`, the episode 
 - Paired error of the counterfactual metric at `t=15` versus the other steps, so A’s `CFDivMSE` can be attributed.
 - Median and winsorized next-state error beside raw `next_state_mse`. Keep the raw mean. The float-token failures in A.11 will otherwise keep dominating any future mean.
 
+#### B.2 implementation notes
+
+**Probes** (`scripts/run_probes.py`, `probes/baselines.py`). Written to `probes.json` beside the locked trio. The locked keys `hidden_c_r2`, `regime_accuracy`, and `next_b_r2` use the same code path, `PROBE_RIDGE_ALPHA`, `PROBE_L2`, and episode split as before.
+
+| Key | Location | Definition |
+|---|---|---|
+| `hidden_c_r2_common_cause` | `probes[codec]` | Same `alpha = 1.0` held-out ridge, fit on train-split and scored on test-split `COMMON_CAUSE` rows only. `null` if either side has fewer than 2 such rows. `n_common_cause_train_states` and `n_common_cause_test_states` are recorded beside it. |
+| `persistence_next_b_r2` | `fixture_baselines` | Held-out `R²` of the last observed `b` in the prefix. |
+| `running_mean_next_b_r2` | `fixture_baselines` | Held-out `R²` of the mean observed `b` in the prefix. |
+| `oracle_next_b_r2` | `fixture_baselines` | Held-out `R²` of `E[b_{t+1} \| regime, hidden_c]` (`hidden_c` under `COMMON_CAUSE`, else `0`). |
+| `untrained_probes[codec]` | top level | The locked trio plus `hidden_c_r2_common_cause` on the untrained initialization of the same run: `model_init_seed` from that run's `config.json`, same codec, same fixture and split. Omitted with `--skip-untrained`. |
+
+- The three baselines do not depend on the codec, so they are stored once per `probes.json`, not per codec. They use the same test rows as `next_b_r2` (`n_test_next_states`).
+- A prefix with no observed `b` yet predicts the constant `0.0` (`no_observed_b_fallback`). No train or test target enters a baseline prediction. On `artifacts/dataset_v0/val.h5` this reproduces A.7: `0.4233`, `0.6673`, `0.7153`.
+- The oracle reads the latent `(regime, hidden_c)`. It is an evaluation-side ceiling (I7). It is not a model input and does not touch training (I2) or codecs (I8). A test checks it against the simulator's per-regime conditional mean.
+- `report.py` reads only the keys in `PROBE_METRIC_KEYS`, so the new keys do not change any existing table or verdict. They are not rendered yet.
+
+**Evaluation** (`eval/diagnostics.py`, wired in `scripts/evaluate_runs.py`). Written as a separate top-level `diagnostics` block in `metrics_eval.json`, not inside `splits`. `METRIC_KEYS`, the locked `splits` content, `EVAL_SCHEMA_VERSION`, and the §5 aggregation are unchanged, and the aggregator does not read the block. The code is in a new module instead of `eval/score.py`, which keeps every locked scoring function byte-identical. `--skip-diagnostics` reproduces the previous output exactly; a test scores the same checkpoint with and without the block and asserts identical `splits`.
+
+| Split | Keys |
+|---|---|
+| `intervention` | `intervention_accuracy_both_observed` (locked hit rule on steps with both sensors observed; parse failures stay in the denominator), `intervention_accuracy_parsed` (hits over parsed steps), `parse_fail_rate_both_observed`, step counts, and the codec-independent `zero_baseline_acc`, `oracle_acc` and their `_both_observed` variants. |
+| `counterfactual` | `cf_step_mse_before_intervention`, `cf_step_mse_at_intervention`, `cf_step_mse_after_intervention`, mean true and predicted `\|Δb\|` gap at the intervention step, and step counts. This is a step-level decomposition. It does not recompute the locked per-pair `counterfactual_divergence_mse`. |
+| `val`, `ood_partial_obs` | `next_state_mse_raw` (equals the locked mean), `next_state_mse_median`, `next_state_mse_winsorized` (squared errors clipped at the 95th percentile, linear), `next_state_squared_error_max`, `next_state_n_errors`. |
+
+- The oracle for the intervention baseline is the A.5 definition: the intervened value when the scored variable is the intervened variable's causal child, `hidden_c` under `COMMON_CAUSE`, otherwise `0`, then `quantize_value`.
+- The diagnostic hit rule is a copy of the locked one with the same decoder helpers. Tests assert that its hits and parse counts recompose the locked `intervention_accuracy` and `parse_fail_rate` for both decoders.
+- Winsorizing at the 95th percentile only suppresses a rare outlier when the split has enough error values (a single outlier in 20 values is only partly clipped). Compare `median` and `max` with `winsorized` before trusting any one of them.
+- The new eval keys are per-run only. There is no median/IQR aggregation and no report rendering for them yet. Read them from each `metrics_eval.json`.
+
+**Provenance.** A rerun must be scored from a clean tree to clear `eval_git_dirty=true` and to give `probe_git_dirty=false`. Commit these changes first. Write reruns to new directories so the existing `probes_v2` and `eval_v2` bundles stay as the locked record. A correct rerun leaves every locked key equal to the existing bundle (same checkpoints, decoder, fixture, and splits). A comparison script is in the rerun checklist below.
+
 ### B.3 Not a fix
 
 - Do not rewrite `encode_B` or `encode_D` so that partial observations parse. That is a codec-definition change (I15) and would move the information layout of B and D relative to A, C, and E.
@@ -359,3 +402,68 @@ These add keys. They do not retune `PROBE_RIDGE_ALPHA`, `PROBE_L2`, the episode 
 | `C_no_alts`, new seeds, new splits | new experiment under I15 | after that train | after that train | after those runs |
 
 B.1 does not need a GPU. B.2 probes reuses the locked checkpoints. B.2 eval is optional and is also the only way to clear `eval_git_dirty=true` without rewriting history. Neither eval decoder needs to be rerun to stop the verdict from calling a 94% parse failure `CLEAR_IQR_SEPARATION`; that is B.1 item 4.
+
+### B.5 B.2 rerun checklist
+
+Run from the repository root with a GPU visible to PyTorch. Every output goes to a new directory; the existing `probes_v2` / `eval_v2` bundles stay untouched as the locked record. Commit the code first so the reruns record `git_dirty=false`.
+
+```bash
+# 0. Tests, then a clean tree
+uv run pytest -q
+git status --short          # must print nothing
+
+# 1. Probes: all 10 cells (~10-30 min; the untrained pass roughly doubles forward passes)
+uv run python scripts/run_probes.py \
+  --runs-root artifacts/runs/full_v0 \
+  --raw-dir artifacts/dataset_v0 \
+  --vocab-dir artifacts/vocabs \
+  --budget-profile full_v0 \
+  --matrix --device rocm --require-gpu \
+  --out-dir artifacts/probes/full_v0_v3_b2
+
+# 2. Locked probe keys and CKA unchanged, additive keys present
+uv run python scripts/verify_b2_additive.py probes \
+  --baseline artifacts/probes/full_v0_v2 \
+  --candidate artifacts/probes/full_v0_v3_b2
+
+# 3. Eval, field_to_delimiter (add --aggregate to also write the §5 summaries)
+uv run python scripts/evaluate_runs.py \
+  --runs-root artifacts/runs/full_v0 \
+  --metrics-root artifacts/runs/full_v0_eval_v3_ftd \
+  --raw-dir artifacts/dataset_v0 \
+  --eval-dir artifacts/eval_splits_v2 \
+  --vocab-dir artifacts/vocabs \
+  --budget-profile full_v0 \
+  --decoder-mode field_to_delimiter \
+  --aggregate --aggregates-dir artifacts/runs/aggregates_eval_v3_ftd \
+  --device rocm --require-gpu
+
+# 4. Same for skeleton
+uv run python scripts/evaluate_runs.py \
+  --runs-root artifacts/runs/full_v0 \
+  --metrics-root artifacts/runs/full_v0_eval_v3 \
+  --raw-dir artifacts/dataset_v0 \
+  --eval-dir artifacts/eval_splits_v2 \
+  --vocab-dir artifacts/vocabs \
+  --budget-profile full_v0 \
+  --decoder-mode skeleton \
+  --aggregate --aggregates-dir artifacts/runs/aggregates_eval_v3 \
+  --device rocm --require-gpu
+
+# 5. Locked eval splits unchanged, diagnostics present, eval git_dirty printed
+uv run python scripts/verify_b2_additive.py eval \
+  --baseline artifacts/runs/full_v0_eval_v2_ftd \
+  --candidate artifacts/runs/full_v0_eval_v3_ftd
+uv run python scripts/verify_b2_additive.py eval \
+  --baseline artifacts/runs/full_v0_eval_v2 \
+  --candidate artifacts/runs/full_v0_eval_v3
+
+# 6. Reports (existing keys only; B.2 keys are not rendered)
+uv run python scripts/summarize_results.py \
+  --aggregates-dir artifacts/runs/aggregates_eval_v3_ftd \
+  --probes-dir artifacts/probes/full_v0_v3_b2 \
+  --manifest-path artifacts/runs/full_v0_eval_v3_ftd/manifest.json \
+  --out-dir artifacts/reports/full_v0_eval_v3_ftd_probes_v3_b2
+```
+
+`verify_b2_additive.py` compares locked floats with `--atol 1e-6` (default). A GPU run can differ from the earlier one in the last digits; a diff near that tolerance is hardware noise, and a diff of 1e-3 or more is a real change and should be investigated before any B.2 number is used. If step 2 or step 5 reports a `LOCKED DIFF`, do not use the new bundle.
